@@ -51,8 +51,9 @@ export const projects: Project[] = [
     role: '서버와 Flutter 앱 전체',
     stack: 'Kotlin 2.3 · Spring Boot 4.1 · Spring Modulith · MySQL · Flutter 3',
     links: [
-      { label: '서버 저장소', href: 'https://github.com/ImHereOfRati/server' },
-      { label: '서비스 소개', href: 'https://imhere.ratiko.co.kr' },
+      { label: 'ImHere Github', href: 'https://github.com/ImHereOfRati/server' },
+      { label: '서비스 랜딩 페이지', href: 'https://imhere.ratiko.co.kr' },
+      { label: 'Google Play', href: 'https://play.google.com/store/apps/details?id=com.kdongsu5509.iamhere' },
     ],
   },
   {
@@ -64,7 +65,11 @@ export const projects: Project[] = [
     team: 'FE 1 · BE 3',
     role: '일정 · AI 챗봇 기능, 배포 · CI/CD · 모니터링',
     stack: 'Java 25 · Spring Boot 4.1 · Spring AI · MySQL',
-    links: [{ label: '저장소', href: 'https://github.com/woowacourse-teams/2026-bibbidi' }],
+    links: [
+      { label: 'Bibbidi Github', href: 'https://github.com/woowacourse-teams/2026-bibbidi' },
+      { label: '서비스 랜딩 페이지', href: 'https://bibbidi.kr/landing' },
+      { label: '서비스 바로가기', href: 'https://bibbidi.kr/' },
+    ],
   },
 ]
 

@@ -46,11 +46,7 @@ export default function App() {
             고동수
           </a>
           <nav className="main-nav">
-            {projects.map((p) => (
-              <a key={p.slug} href={`/projects/${p.slug}`} onClick={go(`/projects/${p.slug}`)}>
-                {p.name}
-              </a>
-            ))}
+            <a href="https://www.linkedin.com/in/ds-ko/">LinkedIn</a>
             <a href="https://github.com/kdongsu5509">GitHub</a>
           </nav>
         </div>
@@ -58,11 +54,6 @@ export default function App() {
       <main>
         {entry ? <CasePage entry={entry} go={go} /> : project ? <ProjectPage project={project} go={go} /> : <Home go={go} />}
       </main>
-      <footer className="footer">
-        <div className="container">
-          <span>kod66170@gmail.com</span>
-        </div>
-      </footer>
     </>
   )
 }
@@ -78,6 +69,21 @@ function Home({ go }: { go: Go }) {
             <br />
             아키텍처 테스트로 통제하는 백엔드 개발자
           </h1>
+          <p className="hero__tagline">AI 시대에도 객체지향을 중심으로 설계하는 백엔드 개발자 고동수</p>
+          <dl className="hero__contact">
+            <div>
+              <dt>PHONE</dt>
+              <dd>
+                <a href="tel:01073512781">010-7351-2781</a>
+              </dd>
+            </div>
+            <div>
+              <dt>EMAIL</dt>
+              <dd>
+                <a href="mailto:kod66170@gmail.com">kod66170@gmail.com</a>
+              </dd>
+            </div>
+          </dl>
         </div>
       </section>
 
@@ -96,10 +102,133 @@ function Home({ go }: { go: Go }) {
                       {p.period} · {p.team} · {p.role}
                     </span>
                   </div>
-                  <span className="project-row__count">문제 해결 {casesOf(p).length}개 →</span>
+                  <span className="project-row__count">자세히 보기 →</span>
                 </a>
               </li>
             ))}
+          </ul>
+        </div>
+      </section>
+
+      <section className="section section--edu">
+        <div className="container">
+          <h2 className="section-title">기술 스택</h2>
+          <dl className="stack-list">
+            <div className="stack-row">
+              <dt>주력</dt>
+              <dd>Java 25 · Spring Boot 4.1 · Spring Modulith · Spring AI · JPA · MySQL · Dart 3 · Flutter 3</dd>
+            </div>
+            <div className="stack-row">
+              <dt>경험</dt>
+              <dd>
+                <p>Kotlin 2.3 · Spring Security · QueryDSL · Caffeine · Bucket4j</p>
+                <p>AWS EC2 · ECR · CloudFormation · Docker · Nginx · GitHub Actions</p>
+                <p>Prometheus · Grafana · Loki · Tempo · Alloy · k6 · ArchUnit</p>
+                <p>Firebase FCM · Solapi</p>
+              </dd>
+            </div>
+          </dl>
+        </div>
+      </section>
+
+      <section className="section section--edu">
+        <div className="container">
+          <h2 className="section-title">Education</h2>
+          <ul className="edu-list">
+            <li className="edu-row">
+              <div className="edu-row__body">
+                <h3>경북대학교</h3>
+                <p>학사 · 2027.02 졸업예정</p>
+                <p>독어독문학전공 (주전공)</p>
+                <p>컴퓨터학부 글로벌소프트웨어융합전공 (부전공)</p>
+              </div>
+              <span className="edu-row__period">2020.03 – 2027.02</span>
+            </li>
+            <li className="edu-row">
+              <div className="edu-row__body">
+                <h3>우아한테크코스 8기</h3>
+                <p>백엔드 크루</p>
+              </div>
+              <span className="edu-row__period">2026.02 – 2026.12</span>
+            </li>
+          </ul>
+        </div>
+      </section>
+
+      <section className="section section--edu">
+        <div className="container">
+          <h2 className="section-title">활동 · 수상 · 자격증</h2>
+
+          <h3 className="sub-title">활동</h3>
+          <ul className="edu-list">
+            <li className="edu-row">
+              <div className="edu-row__body">
+                <h3>해달 · 경북대 전자공학과 동아리</h3>
+                <p>3년간 Java · Spring 스터디와 멘토링 진행</p>
+              </div>
+              <span className="edu-row__period">2023.03 – 2026.02</span>
+            </li>
+            <li className="edu-row">
+              <div className="edu-row__body">
+                <h3>Notion Campus Leader</h3>
+                <p>무엇을 만들지 막막해하는 비개발자 학생을 위해 포트폴리오를 직접 만드는 강의로 구성</p>
+              </div>
+              <span className="edu-row__period">2024.09 – 2025.07</span>
+            </li>
+            <li className="edu-row">
+              <div className="edu-row__body">
+                <h3>GDG on Campus KNU</h3>
+                <p>백엔드 세미나와 Solution Challenge 참여</p>
+              </div>
+              <span className="edu-row__period">2024.09 – 2025.07</span>
+            </li>
+          </ul>
+
+          <h3 className="sub-title">수상</h3>
+          <ul className="edu-list">
+            <li className="edu-row">
+              <div className="edu-row__body">
+                <h3>2024 대구를 빛내는 SW 해커톤</h3>
+                <p>최우수상</p>
+                <p>경북대학교 IT대학 컴퓨터학부</p>
+                <p>자취방 이어살기 매칭 앱 · 4인 팀에서 Flutter 앱 담당</p>
+              </div>
+              <span className="edu-row__period">수상일 2024.11.19</span>
+            </li>
+            <li className="edu-row">
+              <div className="edu-row__body">
+                <h3>2024 CO-SHOW 연계 AIM 챌린지</h3>
+                <p>AICOSS 사업단장상 장려상</p>
+                <p>인공지능혁신융합대학사업단</p>
+                <p>무인 키오스크용 소형 언어 모델 개발 · sLLM과 Spring 서버 연동 담당</p>
+              </div>
+              <span className="edu-row__period">수상일 2024.11.22</span>
+            </li>
+          </ul>
+
+          <h3 className="sub-title">자격증</h3>
+          <ul className="edu-list">
+            <li className="edu-row">
+              <div className="edu-row__body">
+                <h3>정보처리기사</h3>
+                <p>한국산업인력공단</p>
+              </div>
+              <span className="edu-row__period">취득일 2025.06.13</span>
+            </li>
+            <li className="edu-row">
+              <div className="edu-row__body">
+                <h3>ADsP 데이터분석 준전문가</h3>
+                <p>한국데이터산업진흥원</p>
+              </div>
+              <span className="edu-row__period">취득일 2025.09.05</span>
+            </li>
+            <li className="edu-row">
+              <div className="edu-row__body">
+                <h3>OPIc IM3</h3>
+                <p>영어</p>
+              </div>
+              <span className="edu-row__period">취득일 2025.06.07</span>
+            </li>
           </ul>
         </div>
       </section>
@@ -152,22 +281,13 @@ function ProjectPage({ project, go }: { project: Project; go: Go }) {
           </div>
         </dl>
 
-        <h2 className="section-title">문제 해결</h2>
         <ol className="case-list">
           {list.map((c) => (
-            <li key={c.slug}>
-              <a href={`/cases/${c.slug}`} onClick={go(`/cases/${c.slug}`)} className="case-row">
-                <div className="case-row__body">
-                  <h3>{c.title}</h3>
-                  <p>{c.summary}</p>
-                </div>
-                {c.metrics[0] && (
-                  <strong className="case-row__metric">
-                    {c.metrics[0].value}
-                    <small>{c.metrics[0].label}</small>
-                  </strong>
-                )}
-              </a>
+            <li key={c.slug} className="case-item">
+              <h3 className="case-item__title">{c.title}</h3>
+              <div className="prose case-item__body">
+                <c.Content components={mdxComponents} />
+              </div>
             </li>
           ))}
         </ol>
@@ -187,7 +307,7 @@ function CasePage({ entry, go }: { entry: CaseEntry; go: Go }) {
     <article className="case-page">
       <div className="container">
         <a href={`/projects/${project.slug}`} onClick={go(`/projects/${project.slug}`)} className="back-link">
-          ← {project.name} 문제 해결 목록
+          ← {project.name}
         </a>
         <header className="case-head">
           <span className="case-head__project">
@@ -233,7 +353,7 @@ function CasePage({ entry, go }: { entry: CaseEntry; go: Go }) {
         ) : (
           <a href={`/projects/${project.slug}`} onClick={go(`/projects/${project.slug}`)} className="next-case">
             <span>{project.name}</span>
-            <strong>문제 해결 목록으로 돌아가기</strong>
+            <strong>프로젝트로 돌아가기</strong>
           </a>
         )}
       </div>
