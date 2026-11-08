@@ -1,10 +1,12 @@
 import { useEffect, useState, type MouseEvent } from 'react'
-import { cases, projects, type CaseEntry } from './content'
+import { cases, casesOf, projectOf, projects, type CaseEntry, type Project } from './content'
 import { Sequence, Msg, Note, Phase } from './diagrams/Sequence'
 import { Graph } from './diagrams/Graph'
 import { Flow, Step, Compare, Panel } from './diagrams/Flow'
 
 const mdxComponents = { Sequence, Msg, Note, Phase, Graph, Flow, Step, Compare, Panel }
+
+type Go = (to: string) => (e: MouseEvent) => void
 
 function usePath() {
   const [path, setPath] = useState(window.location.pathname)
@@ -13,7 +15,7 @@ function usePath() {
     window.addEventListener('popstate', onPop)
     return () => window.removeEventListener('popstate', onPop)
   }, [])
-  const go = (to: string) => (e: MouseEvent) => {
+  const go: Go = (to) => (e) => {
     if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return
     e.preventDefault()
     window.history.pushState(null, '', to)
@@ -23,10 +25,18 @@ function usePath() {
   return { path, go }
 }
 
+function useTitle(title?: string) {
+  useEffect(() => {
+    document.title = title ? `${title} | 고동수` : '고동수 포트폴리오'
+  }, [title])
+}
+
 export default function App() {
   const { path, go } = usePath()
-  const slug = path.match(/^\/cases\/([^/]+)/)?.[1]
-  const current = slug ? cases.find((c) => c.slug === slug) : undefined
+  const projectSlug = path.match(/^\/projects\/([^/]+)\/?$/)?.[1]
+  const caseSlug = path.match(/^\/cases\/([^/]+)/)?.[1]
+  const project = projectSlug ? projects.find((p) => p.slug === projectSlug) : undefined
+  const entry = caseSlug ? cases.find((c) => c.slug === caseSlug) : undefined
 
   return (
     <>
@@ -36,17 +46,18 @@ export default function App() {
             고동수
           </a>
           <nav className="main-nav">
-            <a href="/#projects" onClick={go('/')}>
-              프로젝트
-            </a>
-            <a href="/#cases" onClick={go('/')}>
-              문제 해결
-            </a>
+            {projects.map((p) => (
+              <a key={p.slug} href={`/projects/${p.slug}`} onClick={go(`/projects/${p.slug}`)}>
+                {p.name}
+              </a>
+            ))}
             <a href="https://github.com/kdongsu5509">GitHub</a>
           </nav>
         </div>
       </header>
-      <main>{current ? <CasePage entry={current} go={go} /> : <Home go={go} />}</main>
+      <main>
+        {entry ? <CasePage entry={entry} go={go} /> : project ? <ProjectPage project={project} go={go} /> : <Home go={go} />}
+      </main>
       <footer className="footer">
         <div className="container">
           <span>kod66170@gmail.com</span>
@@ -56,12 +67,12 @@ export default function App() {
   )
 }
 
-function Home({ go }: { go: (to: string) => (e: MouseEvent) => void }) {
+function Home({ go }: { go: Go }) {
+  useTitle()
   return (
     <>
       <section className="hero">
         <div className="container">
-          <span className="eyebrow">백엔드 개발자 고동수</span>
           <h1>
             하네스를 씌워도 널뛰는 AI,
             <br />
@@ -70,86 +81,119 @@ function Home({ go }: { go: (to: string) => (e: MouseEvent) => void }) {
         </div>
       </section>
 
-      <section id="projects" className="section">
+      <section className="section">
         <div className="container">
           <h2 className="section-title">프로젝트</h2>
-          <div className="project-grid">
+          <ul className="project-list">
             {projects.map((p) => (
-              <article key={p.name} className="project-card">
-                <h3>{p.name}</h3>
-                <p>{p.summary}</p>
-                <dl>
-                  <div>
-                    <dt>기간</dt>
-                    <dd>{p.period}</dd>
+              <li key={p.slug}>
+                <a href={`/projects/${p.slug}`} onClick={go(`/projects/${p.slug}`)} className="project-row">
+                  <img src={p.logo} alt="" className="project-logo" />
+                  <div className="project-row__body">
+                    <h3>{p.name}</h3>
+                    <p>{p.summary}</p>
+                    <span className="project-row__meta">
+                      {p.period} · {p.team} · {p.role}
+                    </span>
                   </div>
-                  <div>
-                    <dt>구성</dt>
-                    <dd>{p.team}</dd>
-                  </div>
-                  <div>
-                    <dt>맡은 범위</dt>
-                    <dd>{p.role}</dd>
-                  </div>
-                  <div>
-                    <dt>기술</dt>
-                    <dd>{p.stack}</dd>
-                  </div>
-                </dl>
-                {p.links.map((l) => (
-                  <a key={l.href} href={l.href} className="text-link">
-                    {l.label}
-                  </a>
-                ))}
-              </article>
+                  <span className="project-row__count">문제 해결 {casesOf(p).length}개 →</span>
+                </a>
+              </li>
             ))}
-          </div>
-        </div>
-      </section>
-
-      <section id="cases" className="section">
-        <div className="container">
-          <h2 className="section-title">문제 해결</h2>
-          <div className="case-grid">
-            {cases.map((c) => (
-              <a key={c.slug} href={`/cases/${c.slug}`} onClick={go(`/cases/${c.slug}`)} className="case-card">
-                <span className="case-card__project">{c.project}</span>
-                <h3>{c.title}</h3>
-                <p>{c.summary}</p>
-                {c.metrics[0] && (
-                  <strong className="case-card__metric">
-                    {c.metrics[0].value}
-                    <small>{c.metrics[0].label}</small>
-                  </strong>
-                )}
-              </a>
-            ))}
-          </div>
+          </ul>
         </div>
       </section>
     </>
   )
 }
 
-function CasePage({ entry, go }: { entry: CaseEntry; go: (to: string) => (e: MouseEvent) => void }) {
+function ProjectPage({ project, go }: { project: Project; go: Go }) {
+  useTitle(project.name)
+  const list = casesOf(project)
+  return (
+    <section className="project-page">
+      <div className="container">
+        <a href="/" onClick={go('/')} className="back-link">
+          ← 프로젝트 목록
+        </a>
+        <header className="project-head">
+          <img src={project.logo} alt={`${project.name} 로고`} className="project-logo is-large" />
+          <div>
+            <h1>{project.name}</h1>
+            <p>{project.summary}</p>
+          </div>
+        </header>
+        <dl className="project-facts">
+          <div>
+            <dt>기간</dt>
+            <dd>{project.period}</dd>
+          </div>
+          <div>
+            <dt>구성</dt>
+            <dd>{project.team}</dd>
+          </div>
+          <div>
+            <dt>맡은 범위</dt>
+            <dd>{project.role}</dd>
+          </div>
+          <div>
+            <dt>기술</dt>
+            <dd>{project.stack}</dd>
+          </div>
+          <div>
+            <dt>링크</dt>
+            <dd className="project-links">
+              {project.links.map((l) => (
+                <a key={l.href} href={l.href} className="text-link">
+                  {l.label}
+                </a>
+              ))}
+            </dd>
+          </div>
+        </dl>
+
+        <h2 className="section-title">문제 해결</h2>
+        <ol className="case-list">
+          {list.map((c) => (
+            <li key={c.slug}>
+              <a href={`/cases/${c.slug}`} onClick={go(`/cases/${c.slug}`)} className="case-row">
+                <div className="case-row__body">
+                  <h3>{c.title}</h3>
+                  <p>{c.summary}</p>
+                </div>
+                {c.metrics[0] && (
+                  <strong className="case-row__metric">
+                    {c.metrics[0].value}
+                    <small>{c.metrics[0].label}</small>
+                  </strong>
+                )}
+              </a>
+            </li>
+          ))}
+        </ol>
+      </div>
+    </section>
+  )
+}
+
+function CasePage({ entry, go }: { entry: CaseEntry; go: Go }) {
+  useTitle(entry.title)
   const { Content } = entry
-  useEffect(() => {
-    document.title = `${entry.title} | 고동수`
-    return () => {
-      document.title = '고동수 포트폴리오'
-    }
-  }, [entry])
-  const i = cases.indexOf(entry)
-  const next = cases[i + 1]
+  const project = projectOf(entry)
+  const siblings = casesOf(project)
+  const next = siblings[siblings.indexOf(entry) + 1]
 
   return (
     <article className="case-page">
       <div className="container">
-        <a href="/#cases" onClick={go('/')} className="back-link">
-          ← 문제 해결 목록
+        <a href={`/projects/${project.slug}`} onClick={go(`/projects/${project.slug}`)} className="back-link">
+          ← {project.name} 문제 해결 목록
         </a>
         <header className="case-head">
-          <span>{entry.project}</span>
+          <span className="case-head__project">
+            <img src={project.logo} alt="" />
+            {project.name}
+          </span>
           <h1>{entry.headline}</h1>
         </header>
         <div className="case-layout">
@@ -158,10 +202,6 @@ function CasePage({ entry, go }: { entry: CaseEntry; go: (to: string) => (e: Mou
           </div>
           <aside className="case-facts">
             <dl>
-              <div>
-                <dt>프로젝트</dt>
-                <dd>{entry.project}</dd>
-              </div>
               <div>
                 <dt>기간</dt>
                 <dd>{entry.period}</dd>
@@ -185,10 +225,15 @@ function CasePage({ entry, go }: { entry: CaseEntry; go: (to: string) => (e: Mou
             </ul>
           </aside>
         </div>
-        {next && (
+        {next ? (
           <a href={`/cases/${next.slug}`} onClick={go(`/cases/${next.slug}`)} className="next-case">
-            <span>다음 사례</span>
+            <span>{project.name} 다음 사례</span>
             <strong>{next.title}</strong>
+          </a>
+        ) : (
+          <a href={`/projects/${project.slug}`} onClick={go(`/projects/${project.slug}`)} className="next-case">
+            <span>{project.name}</span>
+            <strong>문제 해결 목록으로 돌아가기</strong>
           </a>
         )}
       </div>
