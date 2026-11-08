@@ -1,0 +1,90 @@
+---
+project: ImHere
+order: 3
+title: SMS 중복 발송 방지
+headline: 발송 여부가 불확실한 공급사 오류까지 실패로 기록해 생긴 SMS 중복 발송을 결과 불명 상태와 사후 조회로 차단
+summary: 같은 문자가 두 번 나간 사고의 원인을 찾아 확실히 실패한 경우만 다시 보내도록 발송 상태를 나눴음
+period: 2026.08
+role: 1인 개발 · 서버 전체
+stack: [Kotlin 2.3, Spring Boot 4.1, Solapi SDK]
+metrics:
+  - { value: 60초, label: 결과 불명 건의 실제 결과 조회 주기 }
+  - { value: 최대 2회, label: SMS 한 건당 공급사 호출 }
+---
+
+## 그림
+
+<Compare>
+  <Panel title="변경 전" tone="bad">
+    <Graph
+      cols={3}
+      nodes={[
+        { id: 'pending', label: '대기', col: 1, row: 1 },
+        { id: 'processing', label: '처리 중', col: 2, row: 1 },
+        { id: 'sent', label: '발송 완료', col: 3, row: 1 },
+        { id: 'failed', label: '실패', sub: '응답이 끊긴 경우까지 포함', col: 2, row: 2, tone: 'bad' },
+      ]}
+      edges={[
+        { from: 'pending', to: 'processing' },
+        { from: 'processing', to: 'sent' },
+        { from: 'processing', to: 'failed', tone: 'bad' },
+        { from: 'failed', to: 'pending', tone: 'bad', dashed: true },
+      ]}
+      caption="실제로는 나간 문자도 실패로 기록되면 복구 스케줄러가 다시 보냄"
+    />
+  </Panel>
+  <Panel title="변경 후" tone="good">
+    <Graph
+      cols={3}
+      nodes={[
+        { id: 'pending', label: '대기', col: 1, row: 1 },
+        { id: 'processing', label: '처리 중', col: 2, row: 1 },
+        { id: 'sent', label: '발송 완료', col: 3, row: 1 },
+        { id: 'failed', label: '실패', sub: '잘못된 요청 · 인증 오류 · 미접수', col: 1, row: 2 },
+        { id: 'unknown', label: '결과 불명', sub: '그 밖의 예외 · 처리 중 응답', col: 2, row: 2, tone: 'good' },
+        { id: 'dead', label: '최종 실패', sub: '공급사 호출 없이 중단 · Discord 알림', col: 1, row: 3 },
+      ]}
+      edges={[
+        { from: 'pending', to: 'processing' },
+        { from: 'processing', to: 'sent' },
+        { from: 'processing', to: 'failed' },
+        { from: 'processing', to: 'unknown', tone: 'good' },
+        { from: 'failed', to: 'pending', dashed: true },
+        { from: 'unknown', to: 'sent', tone: 'good', dashed: true },
+        { from: 'unknown', to: 'failed', dashed: true },
+        { from: 'failed', to: 'dead' },
+      ]}
+      caption="확실히 안 나간 경우만 다시 보냄. 결과 불명은 60초마다 공급사 메시지 ID로 실제 결과를 조회해 발송 완료나 실패로 확정하고 실패가 한도에 닿으면 최종 실패"
+    />
+  </Panel>
+</Compare>
+
+## 문제
+
+- 테스트 중 같은 문자가 3분 간격으로 두 번 발송됐음
+- 원인은 공급사 응답이 끊기는 것처럼 실제 발송 여부를 알 수 없는 예외까지 실패로 기록한 데 있었음. 복구 스케줄러는 실패 건을 다시 보내므로 이미 나간 문자가 한 번 더 나갔음
+- 이 구조라면 공급사 응답이 끊길 때마다 재시도 한도까지 같은 문자가 반복될 수 있어 문자 요금 낭비와 중복 알림이 이어질 수 있었음
+
+## 해결
+
+- 문자가 확실히 나가지 않은 잘못된 요청, 인증 오류, 미접수만 실패로 두고 그 밖의 예외와 공급사의 처리 중 응답은 결과 불명 상태로 분리해 자동 재시도 대상에서 뺐음
+- 결과 불명 건은 60초마다 공급사 메시지 ID로 실제 결과를 조회해 발송 완료나 실패로 확정했음
+- SMS는 실패가 쌓여 재시도 한도에 닿으면 공급사를 다시 부르지 않고 최종 실패로 돌린 뒤 Discord로 알려 사람이 확인하게 했음
+
+## 결과
+
+- 발송 여부가 불확실한 건은 더 이상 자동으로 다시 보내지 않아 같은 원인의 중복 발송 경로를 막았음
+- SMS 한 건이 공급사를 부르는 횟수가 최대 2회로 묶였음
+- 공급사 예외 종류별 분류와 결과 조회는 어댑터 테스트로 고정했음
+
+## 한계
+
+- 공급사 메시지 ID를 받기 전에 응답이 끊긴 건은 조회할 단서가 없어 결과 불명으로 남고 자동으로 확정하지 못함. 실제로는 나가지 않았어도 다시 보내지 않는 쪽을 택한 것
+- Solapi 조회 API는 우리가 붙인 값으로 메시지를 찾을 수 없음. 발송 전에 메시지 그룹을 먼저 만들어 그룹 ID를 받아 두면 응답이 끊겨도 조회할 수 있어 다음 개선안으로 정리함
+
+## 근거
+
+- 예외와 상태 코드 분류 [SolapiAdapter.kt](https://github.com/ImHereOfRati/server/blob/main/src/main/kotlin/com/kdongsu5509/notifications/adapter/out/solapi/SolapiAdapter.kt)
+- 결과 불명 조회 [NotificationRecoveryScheduler.kt](https://github.com/ImHereOfRati/server/blob/main/src/main/kotlin/com/kdongsu5509/notifications/scheduler/NotificationRecoveryScheduler.kt)
+- 재시도 한도 [NotificationDeliveryFacade.kt](https://github.com/ImHereOfRati/server/blob/main/src/main/kotlin/com/kdongsu5509/notifications/application/service/NotificationDeliveryFacade.kt)
+- 수정 커밋 [c48415a](https://github.com/ImHereOfRati/server/commit/c48415a)

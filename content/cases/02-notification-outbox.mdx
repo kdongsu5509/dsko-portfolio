@@ -1,0 +1,64 @@
+---
+project: ImHere
+order: 2
+title: 알림 유실 · 중복 방지
+headline: 알림 요청은 202로 바로 받고 서버가 죽어도 알림을 잃거나 두 번 만들지 않도록 발행 기록과 선점 처리로 구성
+summary: 공급사 응답을 기다리지 않으면서도 서버가 죽었을 때 알림이 사라지거나 중복되지 않게 했음
+period: 2026.08 – 2026.09
+role: 1인 개발 · 서버 전체
+stack: [Kotlin 2.3, Spring Boot 4.1, Spring Modulith, MySQL]
+metrics:
+  - { value: 8건 / 8건, label: 강제 종료 후 복구한 처리 중 알림 }
+  - { value: 114건 / 114건, label: 서로 다른 공급사 메시지 ID }
+---
+
+## 그림
+
+<Sequence lanes={['앱', '알림 API', 'DB', '리스너', '공급사']}>
+  <Phase label="요청 트랜잭션" />
+  <Msg from="앱" to="알림 API" label="알림 요청" />
+  <Msg from="알림 API" to="DB" label="발송 제한 차감 · 이벤트 발행 기록 커밋" />
+  <Msg from="알림 API" to="앱" label="202 Accepted" reply />
+  <Phase label="커밋 뒤 비동기 처리" />
+  <Msg from="리스너" to="DB" label="중복 방지 키로 알림 행 생성" />
+  <Msg from="리스너" to="DB" label="조건부 UPDATE로 선점 · 1행이면 발송" />
+  <Msg from="리스너" to="공급사" label="발송" />
+  <Msg from="공급사" to="리스너" label="결과" reply />
+  <Msg from="리스너" to="DB" label="결과 기록" />
+  <Phase label="발송 중 컨테이너 강제 종료" tone="bad" />
+  <Note at="DB" label="처리 중 알림 8건이 남음" tone="bad" />
+  <Note at="DB" to="리스너" label="재시작 · 미완료 이벤트 재발행과 60초 주기 복구" tone="good" />
+  <Msg from="리스너" to="공급사" label="다시 발송" tone="good" />
+  <Note at="DB" label="8건 모두 발송 완료" tone="good" />
+</Sequence>
+
+## 문제
+
+- FCM과 SMS 같은 외부 공급사 호출을 요청 안에서 동기로 처리하면 공급사가 느릴 때 요청 스레드까지 함께 묶이는 구조였음
+- 그렇다고 메모리 비동기로만 넘기면 202를 응답한 뒤 서버가 죽을 때 아직 보내지 않은 알림이 흔적 없이 사라질 수 있었음
+- 재시작이나 재시도로 같은 이벤트가 다시 처리되면 같은 알림이 두 번 만들어지고 두 번 나갈 수 있었음
+
+## 해결
+
+- 요청 트랜잭션에는 발송 제한 차감과 Spring Modulith의 이벤트 발행 기록만 함께 커밋하고 202로 응답했음. 재시작하면 완료되지 않은 이벤트를 다시 발행하도록 설정
+- 리스너는 이벤트 ID와 발송 수단으로 만든 중복 방지 키에 유니크 제약을 걸어 같은 이벤트로 알림 행이 두 번 생기지 않게 했고 이미 있으면 실패 상태일 때만 다시 시도
+- 발송 직전에는 대기나 실패 상태인 알림만 처리 중으로 바꾸는 조건부 UPDATE를 실행해 1행을 바꾼 워커만 발송하게 했고 60초마다 도는 스케줄러가 오래 멈춘 알림을 다시 처리
+
+## 결과
+
+- 알림 요청은 공급사 응답을 기다리지 않고 202로 끝남
+- 장애 시험에서 발송 지연 30초를 걸고 처리 도중 앱 컨테이너를 강제 종료하자 처리 중 알림 8건이 남았고 재시작 뒤 8건 모두 발송 완료로 바뀌었음
+- 같은 시험에서 발송된 SMS 114건의 공급사 메시지 ID가 모두 달라 같은 알림이 두 번 나간 흔적은 없었음
+
+## 한계
+
+- 멈춘 처리 중 알림을 대기로 되돌려 다시 보내는 방식이라 공급사가 문자를 받은 직후 결과를 기록하기 전에 서버가 죽으면 한 번 더 나갈 수 있음. 잃지 않는 쪽을 택한 대신 이 경로의 중복은 막지 못함
+- 대기와 실패는 5분, 처리 중은 10분이 지나야 복구 대상이 되어 재시작 직후 바로 복구되지는 않음
+- 장애 시험은 실제 Solapi가 아니라 가짜 공급사로 진행했음
+
+## 근거
+
+- 요청 처리 [NotificationService.kt](https://github.com/ImHereOfRati/server/blob/main/src/main/kotlin/com/kdongsu5509/notifications/application/service/NotificationService.kt)
+- 중복 방지 키와 선점 [NotificationDeliveryFacade.kt](https://github.com/ImHereOfRati/server/blob/main/src/main/kotlin/com/kdongsu5509/notifications/application/service/NotificationDeliveryFacade.kt), [NotificationJpaEntity.kt](https://github.com/ImHereOfRati/server/blob/main/src/main/kotlin/com/kdongsu5509/notifications/adapter/out/persistence/NotificationJpaEntity.kt)
+- 복구 스케줄러 [NotificationRecoveryScheduler.kt](https://github.com/ImHereOfRati/server/blob/main/src/main/kotlin/com/kdongsu5509/notifications/scheduler/NotificationRecoveryScheduler.kt)
+- 장애 시험 보고서 [loadtest-sms-recovery-chaos-2026-09-04.md](https://github.com/ImHereOfRati/server/blob/main/docs/loadtest/loadtest-sms-recovery-chaos-2026-09-04.md)

@@ -1,0 +1,75 @@
+---
+project: 비비디
+order: 5
+title: AI 챗봇 모델 분기와 비용 절감
+headline: 모든 질문을 상위 모델 하나로 처리하던 챗봇을 분류 한 번으로 세 모델에 나눠 보내 비용을 상위 모델 단독 대비 절반 수준으로 줄임
+summary: 질문 난이도와 도메인 이탈 여부를 한 번에 판정해 모델을 고르고 실패하면 안전한 경우에만 다른 모델로 재시도했음
+period: 2026.10
+role: BE 3명 중 1명 · AI 챗봇 담당
+stack: [Java 25, Spring Boot 4.1, Spring AI 2.0, Amazon Bedrock]
+metrics:
+  - { value: 절반 수준, label: 상위 모델 단독 대비 예상 비용 }
+  - { value: 1.3배, label: 같은 평가 실행 비용 절감 }
+  - { value: 0.9초, label: 간단한 질문의 평균 첫 응답 }
+  - { value: 10건 / 10건, label: 악성 질문 테스트 차단 }
+---
+
+## 그림
+
+<Graph
+  cols={4}
+  nodes={[
+    { id: 'q', label: '사용자 질문', col: 2, row: 1, span: 2 },
+    { id: 'jev', label: 'Jev 분류 한 번', sub: '난이도 · 프롬프트 주입 · 도메인 이탈', col: 2, row: 2, span: 2 },
+    { id: 'block', label: '차단', sub: '모델 호출 없음', col: 1, row: 3, tone: 'bad' },
+    { id: 'low', label: 'LOW · Qwen', sub: '인사 · 용어 설명', col: 2, row: 3 },
+    { id: 'mid', label: 'MEDIUM · Luna', sub: '조건 한두 개를 반영한 추천', col: 3, row: 3 },
+    { id: 'high', label: 'HIGH · Sol', sub: '상태 판단 · 우선순위 정리', col: 4, row: 3 },
+  ]}
+  edges={[
+    { from: 'q', to: 'jev' },
+    { from: 'jev', to: 'block', tone: 'bad' },
+    { from: 'jev', to: 'low' },
+    { from: 'jev', to: 'mid' },
+    { from: 'jev', to: 'high' },
+  ]}
+  caption="분류에 실패하면 품질을 지키려 HIGH로 보냄"
+/>
+
+<Flow caption="모델 호출이 실패하면 아래 두 조건을 모두 만족할 때만 다음 모델로 재시도">
+  <Step title="모델 호출 실패" tone="bad" />
+  <Step title="아직 글자를 보내지 않았나">보냈다면 답변이 섞이므로 중단</Step>
+  <Step title="쓰기 도구를 부르지 않았나">불렀다면 변경이 두 번 일어나므로 중단</Step>
+  <Step title="다음 모델로 재시도" tone="good">LOW는 MEDIUM, HIGH 순서</Step>
+</Flow>
+
+## 문제
+
+- 처음에는 모든 질문을 상위 모델 Sol 하나로 처리해서 인사나 용어 설명에도 같은 요금이 나가고 같은 시간을 기다렸음
+- 프롬프트를 보강할수록 평가 57개 실행 시간이 18분 38초에서 26분 57초로 늘어나 비용과 시간이 함께 커졌음
+- 도메인 밖 요청과 프롬프트 주입도 걸러야 했는데 검사마다 모델을 따로 부르면 호출이 그만큼 늘어나는 구조였음
+
+## 해결
+
+- 분류 모델 Jev 한 번 호출에 난이도, 프롬프트 주입, 도메인 이탈 세 질문을 함께 물었음. 주입이나 이탈이면 답변 모델을 부르지 않고 차단
+- 난이도에 따라 LOW는 Qwen, MEDIUM은 Luna, HIGH는 Sol로 보냈고 일정과 체크리스트를 바꾸는 요청은 Tool Calling으로 처리
+- 모델 호출이 실패하면 정해진 순서로 다음 모델에 재시도하되 사용자에게 글자를 이미 보냈거나 일정과 체크리스트를 바꾸는 도구 호출을 시도했다면 재시도하지 않게 했음. 답변이 섞이거나 같은 변경이 두 번 일어나는 것을 막기 위해서
+
+## 결과
+
+- 같은 요청을 Sol로만 처리했을 때와 비교해 비용이 절반 수준으로 줄 것으로 추정했고 같은 평가를 실제로 다시 돌린 비용은 0.74달러에서 0.57달러로 1.3배 줄었음
+- 간단한 질문의 평균 첫 응답은 0.88초, 차단된 요청은 0.20초 안에 끝났음
+- 악성 질문 테스트 10건을 모두 차단했음
+
+## 한계
+
+- 전체 평균 첫 응답은 3.24초에서 3.20초로 거의 그대로였음. MEDIUM과 HIGH는 평균 5초를 넘었음. 요청 종류를 나누지 않고 일괄 3초를 목표로 잡은 것이 잘못이었고 등급별 목표가 필요했음
+- 변경 전 42턴과 변경 후 팀 테스트를 포함한 운영 요청 94건을 비교한 것이라 표본이 작고 Tool Calling 포함 여부처럼 측정 조건도 조금 다름
+- 비용 절반은 같은 요청을 Sol로 처리했다고 가정한 추정치임
+
+## 근거
+
+- 분류 [ModelClassifier.java](https://github.com/woowacourse-teams/2026-bibbidi/blob/dev-be/BE/src/main/java/com/bibbidi/wedding/chat/adapter/ai/routing/ModelClassifier.java)
+- 재시도 순서 [ChatModelTier.java](https://github.com/woowacourse-teams/2026-bibbidi/blob/dev-be/BE/src/main/java/com/bibbidi/wedding/chat/adapter/ai/routing/ChatModelTier.java)
+- 재시도 조건 [SpringAiConversationAdapter.java](https://github.com/woowacourse-teams/2026-bibbidi/blob/dev-be/BE/src/main/java/com/bibbidi/wedding/chat/adapter/ai/SpringAiConversationAdapter.java)
+- 관련 PR [#661](https://github.com/woowacourse-teams/2026-bibbidi/pull/661), [#680](https://github.com/woowacourse-teams/2026-bibbidi/pull/680), [#712](https://github.com/woowacourse-teams/2026-bibbidi/pull/712)
