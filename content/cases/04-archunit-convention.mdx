@@ -1,62 +1,316 @@
 ---
 project: 비비디
 order: 4
-title: ArchUnit으로 기능 간 의존 검증
-headline: 리뷰에서 발견한 기능 간 의존과 순환 참조를 ArchUnit 규칙 13개로 검사
-summary: 초기 MVP에서 드러난 구조 문제를 규칙으로 옮기고, 이후 기능이 늘어도 같은 위반을 테스트에서 확인하게 했습니다
+title: ArchUnit으로 기능 간 의존 검증과 코드 리뷰 자동화
+headline: 사람이 PR마다 반복 지적하던 아키텍처 위반을 ArchUnit 규칙 13개로 자동화하고 일정·체크리스트 기능 경계를 재정의
+summary: 문서에만 있던 팀 컨벤션을 ArchUnit 규칙으로 옮겨 로컬 테스트와 PR CI에서 자동 검증하고, 리뷰어가 기계적인 의존 확인 대신 Service의 책임과 비즈니스 규칙에 집중하도록 개선했습니다
 period: 2026.09 – 2026.11
-role: 백엔드 3명 중 1명 · 최초 ArchUnit 규칙 13개 작성
+role: 백엔드 개발자 3명 중 1명 · 최초 ArchUnit 규칙 13개 작성
 stack: [Java 25, Spring Boot 4.1, ArchUnit, GitHub Actions]
 metrics:
-  - { value: 13개, label: 2026년 9월 도입한 규칙 · 현재 16개 }
-  - { value: 85개, label: 도입 PR의 전체 변경 파일 수 }
+  - { value: 13개, label: 최초 도입한 ArchUnit 규칙 }
+  - { value: 85개, label: 도입 PR의 전체 변경 파일 }
+  - { value: 16개, label: 2026년 11월 기준 확장된 규칙 }
 ---
 
 <Compare>
   <Panel title="도입 전" tone="bad">
     <Flow>
       <Step title="기능 개발">일정과 체크리스트 등 기능을 빠르게 구현</Step>
-      <Step title="사람이 리뷰">기능 간 직접 의존과 책임 배치를 확인</Step>
-      <Step title="후속 정리" tone="bad">순환 참조 등은 병합 뒤 다시 다뤄야 했음</Step>
+      <Step title="사람이 직접 리뷰">타 기능 Repository 직접 참조와 순환 의존을 눈으로 확인</Step>
+      <Step title="후속 정리" tone="bad">병합 뒤 구조 위반과 순환 참조를 다시 해결</Step>
     </Flow>
   </Panel>
   <Panel title="도입 후" tone="good">
     <Flow>
       <Step title="ArchUnit 규칙 13개">의존 방향 4 · 이름과 위치 5 · 작성 규칙 4</Step>
-      <Step title="로컬 테스트">위반을 확인하고 수정</Step>
-      <Step title="PR CI" tone="good">테스트를 다시 실행</Step>
+      <Step title="로컬 테스트 · PR CI" tone="good">기계적 규칙 위반을 테스트에서 즉시 차단</Step>
+      <Step title="사람의 코드 리뷰" tone="good">Service 책임 배치와 비즈니스 규칙에 집중</Step>
     </Flow>
   </Panel>
 </Compare>
 
-### 문제
+### 문제: 기계적으로 판단할 수 있는 규칙까지 사람이 리뷰해야 했습니다
 
-백엔드 PR을 리뷰하며 다른 기능의 내부 구현을 직접 참조하거나 기능끼리 서로 의존하는 코드를 여러 번 봤습니다. [회원 탈퇴 PR #42](https://github.com/woowacourse-teams/2026-bibbidi/pull/42#discussion_r3885559907)에서는 `UserDeletionService`가 Repository 네 개를 주입받고 체크리스트의 삭제 순서까지 알고 있었습니다. 체크리스트의 저장 구조가 바뀌면 회원 탈퇴 코드도 함께 고쳐야 하는 형태라, 삭제 책임을 해당 기능으로 돌리자고 리뷰했습니다.
+**이 작업의 핵심은 사람이 PR(Pull Request)마다 반복 지적하던 계층·기능 간 의존 위반을 ArchUnit 규칙 13개로 코드화해 로컬 테스트와 CI(Continuous Integration)에 맡기고, 도구가 드러낸 순환 의존을 계기로 잘못 나뉘어 있던 도메인 경계까지 재정의한 것입니다.**
 
-[준비 항목 추가 PR #35](https://github.com/woowacourse-teams/2026-bibbidi/pull/35#discussion_r3876886468)에서는 `catalog`가 `checklist`의 JPA Repository를 참조하고 `checklist`는 `catalog`의 Service를 참조해 순환 의존이 생긴다는 지적이 나왔습니다. 당시에는 기능 구현을 진행하고 이 구조를 후속 작업으로 남겼습니다. 이런 판단을 대면과 PR 리뷰에서 계속 해야 했지만, 리뷰만으로 이후의 같은 의존이 다시 생기는지 자동으로 확인할 수는 없었습니다. [CodeRabbit도 연동돼 있었지만](https://github.com/woowacourse-teams/2026-bibbidi/pull/94#issuecomment-5580276077), 당시 저장소의 스타가 10개 미만이라 자동 리뷰가 실행되지 않았습니다.
+비비디(Bibbidi)는 결혼 준비 일정을 관리하는 서비스입니다. 초기 MVP(Minimum Viable Product, 최소 기능 제품)를 빠르게 구현하면서 일정(`appointment`), 체크리스트(`checklist`), 카탈로그(`catalog`), 사용자(`user`) 등의 기능을 각각 패키지로 나누어 개발했습니다. 그러나 백엔드 PR을 리뷰하는 과정에서 다른 기능의 Repository를 직접 참조하거나 기능 간 순환 의존이 발생하는 코드가 반복해서 나타났습니다.
 
-### 선택과 작업
+대표적인 사례가 회원 탈퇴 기능이었습니다. [회원 탈퇴 PR #42](https://github.com/woowacourse-teams/2026-bibbidi/pull/42#discussion_r3885559907)에서 `UserDeletionService`는 네 개의 Repository를 주입받고 있었고 체크리스트 데이터를 어떤 순서로 삭제해야 하는지도 직접 알고 있었습니다. 체크리스트의 영속성 구현이나 삭제 방식이 바뀔 때 회원 탈퇴 기능까지 함께 고쳐야 하는 구조였기 때문에, 각 데이터 삭제 책임은 그 데이터를 소유한 기능으로 돌려야 한다고 리뷰했습니다.
 
-기존 팀 컨벤션 중 코드로 판단할 수 있는 항목을 골라 `ArchitectureConventionTest`에 **ArchUnit 규칙 13개를 직접 작성했습니다.** 계층과 기능 사이 의존 방향 4개, 클래스 이름과 위치 5개, 작성 규칙 4개입니다. 특히 기능 패키지 사이의 순환 참조와 다른 기능의 Repository를 직접 호출하는 코드를 막고자 했습니다. 한 기능을 고칠 때 다른 기능까지 손대야 하는 일을 줄이기 위해서입니다. 이름이나 애너테이션 사용 규칙도 함께 넣었지만, 이 규칙들이 책임 배치를 대신 판단해 주지는 않습니다.
+[준비 항목 추가 PR #35](https://github.com/woowacourse-teams/2026-bibbidi/pull/35#discussion_r3876886468)에서도 비슷한 문제가 드러났습니다. `catalog`가 `checklist`의 JPA(Java Persistence API) Repository를 참조하고 반대로 `checklist`는 `catalog`의 Service를 참조하면서 기능 사이에 순환 의존이 생겼습니다. 당시에는 기능 구현을 우선하고 구조 개선은 후속 작업으로 미뤘습니다.
 
-[도입 PR #94](https://github.com/woowacourse-teams/2026-bibbidi/pull/94)에서는 규칙이 드러낸 기존 위반을 팀과 함께 정리했습니다. 일정과 체크리스트는 개념상 별개였지만 실제 코드에서는 밀접하게 협력해 하나의 기능 경계로 합쳤고, 기능 사이에서 필요한 값은 일정 요약 DTO로 전달했습니다. 인증 애너테이션은 공통 패키지로 옮겼습니다. 팀원은 `catalog`가 `checklist`의 JPA Repository를 직접 주입하던 코드를 제거하고 조회 API를 조정했습니다. 이 PR의 변경 파일 **85개**에는 이러한 구조 변경 외에 Controller 통합 테스트와 픽스처 정리도 포함됩니다.
+진짜 문제는 이러한 위반을 발견하는 방식이었습니다. 패키지 간 의존 방향이나 타 기능 Repository 직접 참조 여부는 코드만으로 기계적인 판별이 가능합니다. 그런데도 리뷰어가 매번 PR을 열어 눈으로 확인하고 같은 원칙을 반복해서 설명해야 했습니다. [CodeRabbit도 연동되어 있었지만](https://github.com/woowacourse-teams/2026-bibbidi/pull/94#issuecomment-5580276077) 당시 저장소의 스타가 10개 미만이라 자동 리뷰가 동작하지 않았습니다. 코드로 확인할 수 있는 규칙은 도구에 맡기고 개발자는 설계와 비즈니스 로직에 집중할 수 있는 환경이 필요했습니다.
 
-도입 당시에는 `release-be` 대상 백엔드 PR의 CI가 `./gradlew test`를 실행했습니다. ArchUnit 테스트가 이 단계에 포함되어 있어 로컬에서 위반을 확인하고 고친 뒤 PR 검사를 받았습니다. 이후 [CI 개편 PR #499](https://github.com/woowacourse-teams/2026-bibbidi/pull/499)에서 `./gradlew check bootJar`로 바뀌었고, 현재 워크플로는 `dev-be`와 `release-be` 대상 PR에서 실행됩니다.
+### 원인: 컨벤션은 문서에 있었지만 코드로 검증되지 않았습니다
 
-### 결과와 한계
+팀에는 계층 간 의존 방향과 클래스 작성 방식에 관한 컨벤션 문서가 이미 있었습니다. 하지만 규칙을 문서에 적어 두는 것만으로는 새로 작성되는 코드가 같은 원칙을 지키는지를 보장할 수 없었습니다.
 
-- 도입 PR에서 기존 순환 참조를 정리하고, 작성한 구조 규칙을 테스트로 계속 실행할 수 있게 했습니다. 규칙 수는 이후 대화 서비스의 HTTP·Spring AI 타입 의존, 밸런스게임 서비스의 Spring AI 타입 의존, SSE 연결 관리의 의존을 검사하는 항목이 추가되어 현재 16개입니다.
-- 코드를 작성하다 로컬 테스트에서 위반을 발견해 CI에 올리기 전에 수정한 적이 있습니다. 리뷰 시간이 얼마나 줄었는지, 변경 비용이 얼마나 감소했는지는 측정하지 않았습니다.
-- [AI 챗봇 PR #421](https://github.com/woowacourse-teams/2026-bibbidi/pull/421#discussion_r4237282779)에서는 AI 도구 어댑터를 어느 패키지에 둘지 팀과 논의했습니다. 코드가 규칙을 통과해도 책임을 어디에 둘지는 사람이 판단해야 했습니다.
-- 새로운 기능 패키지를 추가하면 `ArchitectureConventionTest`의 `FEATURES` 목록도 수정해야 합니다. 목록에서 빠진 기능은 다른 기능 접근 검사 대상이 아니어서 위반을 놓칠 수 있습니다. 규칙이나 예외를 고치는 변경도 테스트 통과만으로는 안전성을 확인하기 어려워 별도로 리뷰해야 합니다.
-- 테스트가 코드의 동작 변화를 잡는지는 별개 문제라, 11월에는 [변경된 운영 클래스에 PIT 변이 검사를 도입](https://github.com/woowacourse-teams/2026-bibbidi/pull/795)했습니다. 과거에 변경한 클래스 세 개를 로컬에서 시험했을 때 변이 31개 중 24개를 잡았습니다. 이 수치는 ArchUnit 규칙의 성능을 뜻하지 않습니다.
+Controller가 Repository를 직접 호출하거나 다른 기능의 내부 Repository를 참조하더라도 Java 컴파일러는 이를 오류로 잡지 않습니다. 기존 기능 테스트 역시 요청한 기능이 동작하는지만 확인할 뿐 팀이 합의한 아키텍처 규칙 준수 여부는 검증하지 않았습니다. **팀이 합의한 문서상의 컨벤션과 실제 코드 사이에 자동으로 검증할 연결고리가 없었기 때문에** 컴파일과 기능 테스트를 모두 통과한 코드에서도 구조 위반이 계속 유입됐습니다.
 
-### 다시 한다면
+### 선택: Spring Modulith 대신 ArchUnit을 사용한 이유
 
-처음부터 객체지향 규칙을 촘촘하게 강제하기보다 MVP를 빠르게 개발해 실제 사용자를 먼저 모으겠습니다. 사용자 반응을 확인하면서 변경 범위가 작은 곳부터 하나씩 객체지향적으로 리팩터링하겠습니다. 이번에는 규칙을 도입하며 한 PR에서 넓은 범위를 고쳐야 했습니다. 다음에는 리팩터링을 작은 변경으로 나눠 진행하고, 팀에서 계속 지켜야 할 규칙이 분명해졌을 때 자동 검사를 추가하겠습니다.
+#### 1. 이전 프로젝트(ImHere)에서 얻은 경험
 
-### 근거
+개인 프로젝트 ImHere에서 Spring Modulith의 `ApplicationModules.verify()`로 공개되지 않은 내부 타입 참조 위반 224건과 모듈 간 순환 의존 7건을 찾아 해결한 경험이 있었습니다([사례 1: 도메인 책임 재설계와 아키텍처 자동 검증](https://portfolio.ratiko.co.kr/cases/module-boundary)). 직접 눈으로 검수한 코드에서도 순환 의존이 발생하는 일을 겪으며 사람이 코드를 읽는 것만으로는 의존성 문제를 빠짐없이 잡기 어렵다는 사실을 확인했습니다. 동시에 Spring Modulith가 내부적으로 ArchUnit을 사용한다는 점을 학습하면서 필요한 규칙만 직접 테스트 코드로 정의하는 방식도 파악하고 있었습니다.
 
-- [최초 ArchUnit 규칙과 도입 PR #94](https://github.com/woowacourse-teams/2026-bibbidi/pull/94)
-- [현재 ArchitectureConventionTest.java](https://github.com/woowacourse-teams/2026-bibbidi/blob/dev-be/BE/src/test/java/com/bibbidi/wedding/ArchitectureConventionTest.java)
-- [현재 백엔드 PR CI](https://github.com/woowacourse-teams/2026-bibbidi/blob/dev-be/.github/workflows/bibbidi-dev-ci.yml)
+#### 2. 비비디에서 ArchUnit을 선택한 이유
+
+비비디에서도 Spring Modulith를 도입할 수 있었지만 이번 목적은 모듈 시스템을 새로 들이거나 프로젝트 전체 구조를 재설계하는 것이 아니었습니다. **기존 팀 컨벤션 가운데 코드로 판단할 수 있는 규칙을 빠르게 자동화하는 일**이 우선이었습니다.
+
+백엔드 개발자 3명이 함께 작업하는 환경에서 당장 필요하지 않은 Spring Modulith의 모듈 공개 범위 제약까지 팀원들에게 학습시키고 적용할 필요는 없었습니다. 반면 ArchUnit은 기존 패키지 구조를 그대로 둔 채 팀에서 합의한 규칙만 골라 테스트 코드로 명시할 수 있었기 때문에 도구의 학습 비용을 줄이면서 목적을 달성하기에 적합했습니다.
+
+### 구현: 기존 팀 컨벤션을 ArchUnit 규칙 13개로 옮겼습니다
+
+팀 컨벤션 문서에서 코드만으로 위반 여부를 판별할 수 있는 항목을 추려 [`ArchitectureConventionTest.java`](https://github.com/woowacourse-teams/2026-bibbidi/blob/dev-be/BE/src/test/java/com/bibbidi/wedding/ArchitectureConventionTest.java)에 최초 13개 규칙을 작성했습니다.
+
+| 분류 | 규칙 수 | 주요 검증 대상 |
+| --- | --- | --- |
+| 계층과 기능 간 의존 | 4개 | 계층 의존 방향, Domain의 독립성, 기능 간 순환 의존, 다른 기능 접근 방식 |
+| 클래스 이름과 위치 | 5개 | Service, Repository, Controller, JPA Repository, Entity 명명 및 패키지 위치 |
+| 작성 규칙 | 4개 | Lombok 사용 제한, `requireNonNull`, 예외 생성 헬퍼, `@RequestBody`와 `@Valid` |
+
+#### 1. 계층 간 의존 방향 검증
+
+Controller, Service, Repository, Persistence 네 계층 사이의 의존 방향을 정의했습니다(실제 코드에는 Controller DTO(Data Transfer Object) 패키지를 제외하는 조건 등이 함께 포함되어 있습니다).
+
+```java
+@ArchTest
+static final ArchRule 계층은_정해진_방향으로만_의존한다 =
+        layeredArchitecture()
+                .consideringOnlyDependenciesInLayers()
+                .layer("Controller").definedBy("..controller..")
+                .layer("Service").definedBy("..service..")
+                .layer("Repository").definedBy("..repository..")
+                .layer("Persistence").definedBy("..persistence..")
+
+                .whereLayer("Controller")
+                .mayNotBeAccessedByAnyLayer()
+
+                .whereLayer("Service")
+                .mayOnlyBeAccessedByLayers("Controller", "Service")
+
+                .whereLayer("Repository")
+                .mayOnlyBeAccessedByLayers("Service", "Repository")
+
+                .whereLayer("Persistence")
+                .mayOnlyBeAccessedByLayers("Repository", "Persistence");
+```
+
+이 규칙으로 Controller가 Repository나 Persistence 계층을 직접 참조하거나 하위 계층이 상위 계층을 역참조하는 코드를 차단했습니다. 아울러 `Domain` 패키지가 Controller, Service, Repository, Persistence 계층에 의존하지 않도록 별도 규칙을 두어 도메인 모델의 독립성을 보호했습니다.
+
+#### 2. 기능 간 순환 의존 검증
+
+기능 패키지들을 각각 하나의 Slice로 묶어 Slice 사이에 순환 의존이 생기면 테스트가 즉시 실패하도록 구성했습니다.
+
+```java
+@ArchTest
+static final ArchRule feature_패키지_사이에는_순환참조가_없다 =
+        slices()
+                .matching("com.bibbidi.wedding.(*)..")
+                .should().beFreeOfCycles();
+```
+
+예를 들어 `catalog`가 `checklist`를 참조하고 `checklist`도 `catalog`를 참조하면 이 규칙에서 바로 걸러집니다.
+
+#### 3. 다른 기능은 Service를 거쳐 접근하도록 강제
+
+다른 기능의 내부 영속성 구현을 직접 참조하지 못하도록 별도 커스텀 조건도 작성했습니다.
+
+```java
+@ArchTest
+static final ArchRule 다른_feature는_그_feature의_Service를_통해서만_접근한다 =
+        classes().should(다른_feature에_접근할땐_서비스만_거친다());
+```
+
+의존 대상의 패키지를 분석해 다른 기능에 접근할 때는 대상 기능의 `service` 패키지만 거치도록 검사합니다. 기능 간 협력을 막는 것이 아니라 정해진 진입점으로만 협력하게 강제하는 방식입니다. 실제 [`ChecklistService.java`](https://github.com/woowacourse-teams/2026-bibbidi/blob/dev-be/BE/src/main/java/com/bibbidi/wedding/checklist/service/ChecklistService.java)는 카탈로그 검증이 필요할 때 `CatalogRepository` 대신 `CatalogService`를 호출합니다.
+
+```java
+@Service
+public class ChecklistService {
+
+    private final ChecklistRepository checklistRepository;
+    private final CatalogService catalogService;
+
+    @Transactional
+    public ChecklistItemResult changeItemCategory(
+            Long ownerId,
+            Long checklistItemId,
+            Long categoryId
+    ) {
+        Checklist checklist =
+                checklistRepository.getByChecklistItemId(checklistItemId);
+
+        catalogService.validateCategoryExists(categoryId);
+
+        ChecklistItem changed =
+                checklist.changeItemCategory(ownerId, checklistItemId, categoryId);
+
+        ChecklistItem saved =
+                checklistRepository.saveItem(checklist, changed);
+
+        return ChecklistItemResult.from(saved);
+    }
+}
+```
+
+체크리스트는 카탈로그의 내부 저장 방식을 알 필요가 없고 카테고리 존재 여부는 데이터를 소유한 카탈로그 기능이 검증합니다. 기능 간 데이터 전달에는 `CatalogItemSnapshot`, `CatalogItemDetailSnapshot` 같은 DTO를 활용했습니다. 다만 실제 규칙에서는 애너테이션과 일부 공통 패키지에 예외를 허용해, 타 기능의 저장소 구현에 직접 의존하는 문제를 막으면서 필요한 협력 경로를 열어 두었습니다.
+
+### 예상보다 커진 리팩터링: 일정과 체크리스트의 기능 경계 재정의
+
+ArchUnit 규칙을 처음 실행하자 예상보다 많은 위반이 드러났습니다. 그중 가장 해결하기 까다로웠던 문제는 단순한 import 수정이나 클래스 이동만으로 풀리지 않는 **일정(`appointment`)과 체크리스트(`checklist`) 사이의 순환 의존**이었습니다.
+
+#### 1. 기존 기능 경계의 문제와 통합 결정
+
+기존에는 일정과 체크리스트를 별도 기능 패키지로 관리했지만 실제 도메인에서는 일정이 체크리스트 항목에 종속된 개념이었습니다. 체크리스트는 연결된 일정을 조회해야 했고 일정의 상태 변경도 체크리스트 항목 상태와 맞물려 있었습니다. 두 기능을 별도 패키지로 유지하면 서로의 데이터와 처리 결과를 계속 참조해야 했습니다.
+
+인터페이스를 끼워 넣어 의존 방향만 우회할 수도 있었지만, 먼저 두 개념이 독립된 기능 경계로 나뉘어 있는 것 자체가 적절한지부터 팀원들과 다시 검토했습니다. 논의 끝에 **일정은 체크리스트와 별개로 존재하는 독립 기능이 아니라 체크리스트 항목에 속하는 하위 개념**이라는 데 의견을 모았고, 일정의 도메인·서비스·저장소를 모두 `checklist` 패키지로 통합했습니다.
+
+<Compare>
+  <Panel title="변경 전 — 별도의 기능 경계" tone="bad">
+    <Graph
+      cols={2}
+      nodes={[
+        { id: 'appointment', label: 'appointment', sub: '일정 조회 · 변경', col: 1, row: 1, tone: 'bad' },
+        { id: 'checklist', label: 'checklist', sub: '준비 항목 · 상태 관리', col: 2, row: 1, tone: 'bad' },
+      ]}
+      edges={[
+        { from: 'appointment', to: 'checklist', label: '서로의 정보와 처리가 필요', tone: 'bad' },
+        { from: 'checklist', to: 'appointment', tone: 'bad' },
+      ]}
+    />
+  </Panel>
+  <Panel title="변경 후 — 하나의 기능 경계" tone="good">
+    <Graph
+      cols={2}
+      nodes={[
+        { id: 'checklistService', label: 'ChecklistService', sub: 'checklist 패키지 내부', col: 1, row: 1, tone: 'good' },
+        { id: 'appointmentService', label: 'AppointmentService', sub: 'checklist 패키지 내부 통합', col: 2, row: 1, tone: 'good' },
+      ]}
+      edges={[
+        { from: 'checklistService', to: 'appointmentService', label: '단일 기능 경계 안에서 협력', tone: 'good' },
+      ]}
+    />
+  </Panel>
+</Compare>
+
+#### 2. 도메인 객체 직접 반환을 요약 DTO로 전환
+
+기능 경계를 합치면서 일정 조회 결과를 전달할 때 `Appointment` 도메인 객체를 그대로 노출하던 메서드도 `AppointmentSummaryResult` DTO를 반환하도록 고쳤습니다.
+
+```java
+// 변경 전: 도메인 객체를 직접 반환
+public List<Appointment> findAllByChecklistItemIdInOrderByCreatedAtAscIdAsc(
+        List<Long> checklistItemIds
+) {
+    return appointmentRepository
+            .findAllByChecklistItemIdInOrderByCreatedAtAscIdAsc(checklistItemIds);
+}
+
+// 변경 후: 필요한 정보만 담은 요약 DTO 반환
+public List<AppointmentSummaryResult> findAllByChecklistItemIdInOrderByCreatedAtAscIdAsc(
+        List<Long> checklistItemIds
+) {
+    return appointmentRepository
+            .findAllByChecklistItemIdInOrderByCreatedAtAscIdAsc(checklistItemIds)
+            .stream()
+            .map(AppointmentSummaryResult::from)
+            .toList();
+}
+```
+
+순환 의존을 없애려고 단순히 호출 방향만 틀어막은 것이 아니라 도메인 개념 사이의 소유 관계를 다시 따져 기능 경계를 재설정한 경험이었습니다.
+
+### 도입 비용: 하나의 PR에서 85개 파일을 수정했습니다
+
+팀 컨벤션을 ArchUnit 규칙으로 옮기려던 작업은 기존 위반 정리까지 맞물리며 [도입 PR #94](https://github.com/woowacourse-teams/2026-bibbidi/pull/94)에서 **총 85개 파일 변경**으로 이어졌습니다. 이 PR에는 ArchUnit 규칙 13개 추가 외에도 다음 작업이 함께 포함됐습니다.
+
+- 일정(`appointment`)과 체크리스트(`checklist`)의 기능 경계 통합 및 `AppointmentSummaryResult` 도입
+- 인증 애너테이션을 `common.auth` 패키지로 이동
+- `catalog`의 `checklist` JPA Repository 직접 참조 제거
+- Controller 통합 테스트의 Repository 직접 주입 제거
+- `MockMvc`와 `@Sql`을 활용한 테스트 픽스처 정리 및 통합 테스트 공통 설정 추출
+
+따라서 85개 파일 모두가 순수한 아키텍처 위반 수정 결과는 아니었지만, 자동 검증을 켜기 위해 넓은 범위의 코드 변경과 리뷰 부담을 감수해야 했습니다. 실제로 PR 리뷰 과정에서 아직 실패하는 규칙이 남아 있는 점과 작업 완료 기준이 모호하다는 팀원의 피드백도 받았습니다. 기존 위반을 방치하면 이후에도 사람이 같은 문제를 반복 확인해야 했기에 초기 정리 비용을 감수했으나, 규칙 추가와 구조 리팩터링을 더 작은 PR 단위로 나눴다면 리뷰와 검증이 훨씬 수월했을 것입니다.
+
+### CI 연동: PR에서 아키텍처 위반을 자동 검사
+
+작성한 `ArchitectureConventionTest`는 별도 수동 절차가 아니라 일반 단위 테스트 실행 단계에 포함했습니다. 도입 당시 `release-be` 대상 백엔드 PR에서는 `./gradlew test`로 검증했고, 이후 [백엔드 CI 개편 PR #499](https://github.com/woowacourse-teams/2026-bibbidi/pull/499)를 거쳐 현재는 `dev-be`와 `release-be` 대상 PR에서 다음 명령으로 실행됩니다.
+
+```bash
+./gradlew check bootJar
+```
+
+<Flow>
+  <Step title="기능 개발">신규 기능 작성 및 기존 코드 수정</Step>
+  <Step title="로컬 ArchUnit 테스트">PR 생성 전 로컬에서 규칙 위반 즉시 발견·수정</Step>
+  <Step title="PR CI" tone="good">./gradlew check bootJar로 아키텍처 규칙 재검증</Step>
+  <Step title="사람의 코드 리뷰" tone="good">Service 책임 · 비즈니스 규칙 · 설계 판단에 집중</Step>
+</Flow>
+
+### 결과: 리뷰어가 집중하는 대상이 달라졌습니다
+
+- **반복적인 의존 규칙 검사를 자동화**: 다른 기능의 내부 구현이나 Service를 잘못 참조하는 실수를 PR을 올리기 전 로컬 ArchUnit 테스트에서 바로 잡아내어 리뷰어가 같은 규칙을 반복 설명하던 일을 없앴습니다.
+- **코드 리뷰의 초점 변화**: 기계적인 패키지·의존 규칙 확인을 테스트에 넘긴 뒤 일반 PR에서는 Service가 적절한 책임을 맡고 있는지와 비즈니스 규칙이 올바르게 구현됐는지에 집중했습니다. 반면 ArchUnit 규칙 자체를 건드리는 PR은 제약이 느슨해지지 않도록 사람이 직접 주의 깊게 검토했습니다(리뷰 시간이나 수정 요청 횟수의 정량 감소 폭은 따로 측정하지 않았습니다).
+- **규칙을 13개에서 16개로 확장**: 최초 13개 규칙에 머물지 않고 기능이 늘어남에 따라 드러난 의존 문제를 반영해 2026년 11월 기준 **16개 규칙**으로 확장했습니다.
+  - 대화(`chat`) Service가 HTTP(Hypertext Transfer Protocol) 및 Spring AI(Artificial Intelligence) 타입에 직접 의존하지 않도록 제한
+  - 밸런스게임(`balancegame`) Service가 Spring AI 타입에 직접 의존하지 않도록 제한
+  - SSE(Server-Sent Events) 연결 관리 코드가 대화 처리 Service와 AI 모델에 직접 의존하지 않도록 제한
+
+### 한계: ArchUnit은 좋은 설계를 보장하지 않습니다
+
+#### 1. 규칙을 통과해도 책임 배치는 잘못될 수 있습니다
+
+다른 기능의 Repository 대신 Service를 호출하면 ArchUnit 검사는 통과하지만, 특정 Service가 지나치게 많은 책임을 떠안거나 어댑터가 잘못된 패키지에 놓이는 문제까지 도구가 판단해 주지는 않습니다. 실제로 [AI 챗봇 PR #421](https://github.com/woowacourse-teams/2026-bibbidi/pull/421#discussion_r4237282779)에서 AI 도구 어댑터를 어느 기능 패키지에 둘지는 팀원들과 직접 논의해 결정했습니다.
+
+#### 2. 규칙 자체에도 검증의 사각지대가 있습니다
+
+현재 기능 간 접근 검사에는 검사 대상 패키지를 지정하는 `FEATURES` 목록을 사용합니다.
+
+```java
+private static final List<String> FEATURES = List.of(
+        "auth",
+        "balancegame",
+        "catalog",
+        "chat",
+        "checklist",
+        "feedback",
+        "terms",
+        "user"
+);
+```
+
+새 기능 패키지를 만들면서 이 목록에 추가하지 않으면 해당 기능은 접근 검사 대상에서 빠집니다. 또한 일부 패키지와 애너테이션에 허용된 예외나 규칙 자체를 수정하는 PR은 테스트 통과만으로 안전성을 보장할 수 없으므로 반드시 사람이 리뷰해야 합니다.
+
+#### 3. 아키텍처 검증과 동작 검증은 별개입니다
+
+ArchUnit은 정적 의존 구조만 검사할 뿐 비즈니스 동작 결함을 테스트가 잡아내는지는 알려주지 않습니다. 이 한계를 보완하려고 2026년 11월에는 [PIT 변이 테스트 도입 PR #795](https://github.com/woowacourse-teams/2026-bibbidi/pull/795)로 변경된 운영 클래스의 테스트 검증력을 별도로 확인했습니다. 과거 수정했던 운영 클래스 3개를 로컬에서 시험해 **변이 31개 중 24개 감지**를 확인했으며, 구조 검증(ArchUnit)과 동작 검증(단위·변이 테스트)을 목적에 맞게 구분해 적용했습니다.
+
+### 다시 한다면: 도입 시점과 변경 단위를 조정하겠습니다
+
+다시 프로젝트를 시작한다면 기획과 요구사항이 수시로 바뀌는 초기 MVP 단계부터 아키텍처 규칙을 촘촘하게 강제하지는 않겠습니다. 기능 경계 자체가 아직 유동적인 시점에 구조 제약을 일찍 고정하면 요구사항이 바뀔 때마다 코드와 ArchUnit 규칙을 동시에 고쳐야 하기 때문입니다. 또한 한 PR에서 85개 파일을 한꺼번에 고치며 겪은 리뷰 부담을 줄이도록 다음 순서로 진행하겠습니다.
+
+1. **MVP 구현 및 핵심 요구사항 검증**: 초기에는 빠른 기능 구현과 사용자 반응 확인에 집중합니다.
+2. **기획 안정화 후 기능별 책임 정리**: 도메인 개념의 소유 관계와 기능 경계를 먼저 합의합니다.
+3. **작은 단위의 점진적 리팩터링**: 기존 위반을 기능 단위의 작은 PR로 나누어 순차적으로 해소합니다.
+4. **지속할 규칙을 ArchUnit으로 자동화**: 팀에서 계속 유지할 아키텍처 원칙이 확정되면 테스트 코드로 고정합니다.
+5. **책임 배치와 비즈니스 규칙에 리뷰 집중**: 기계적 규칙은 CI에 맡기고 사람은 설계 의도를 리뷰합니다.
+
+### 회고: 자동화의 가치와 한계를 함께 배웠습니다
+
+**기계적으로 판별할 수 있는 의존 규칙은 자동 테스트에 위임하고, 사람은 도메인의 책임 배치와 경계 설정에 집중해야 한다는 기준을 세웠습니다.** 팀 컨벤션을 ArchUnit 규칙으로 옮긴 덕분에 반복적인 의존성 지적을 줄이고 리뷰의 초점을 비즈니스 로직으로 옮길 수 있었습니다.
+
+동시에 도구가 좋은 설계를 대신 결정해 주지 않는다는 사실도 분명히 확인했습니다. 일정과 체크리스트의 순환 의존을 풀 때 두 기능을 통합할지 결정한 것도, 85개 파일 수정이라는 초기 도입 비용과 도입 시점을 판단한 것도 결국 개발자의 몫이었습니다. 앞으로도 자동 검증 도구는 팀이 합의한 설계 원칙을 지키는 안전망으로 활용하되, 도메인 경계 정의와 변경 단위의 조절은 팀 상황과 프로젝트 단계에 맞춰 직접 설계하겠습니다.
+
+### 참고 및 코드 근거
+
+| 구분 | 근거 링크 |
+| --- | --- |
+| ArchUnit 규칙 13개 최초 도입 및 구조 정리 (파일 85개) | [도입 PR #94](https://github.com/woowacourse-teams/2026-bibbidi/pull/94) |
+| 현재 16개 아키텍처 규칙 구현 코드 | [ArchitectureConventionTest.java](https://github.com/woowacourse-teams/2026-bibbidi/blob/dev-be/BE/src/test/java/com/bibbidi/wedding/ArchitectureConventionTest.java) |
+| 기능 간 Service 협력 사례 (`ChecklistService` → `CatalogService`) | [ChecklistService.java](https://github.com/woowacourse-teams/2026-bibbidi/blob/dev-be/BE/src/main/java/com/bibbidi/wedding/checklist/service/ChecklistService.java) |
+| 카탈로그·체크리스트 간 순환 의존 리뷰 기록 | [준비 항목 추가 PR #35](https://github.com/woowacourse-teams/2026-bibbidi/pull/35#discussion_r3876886468) |
+| 회원 탈퇴의 타 도메인 삭제 책임 지적 리뷰 기록 | [회원 탈퇴 PR #42](https://github.com/woowacourse-teams/2026-bibbidi/pull/42#discussion_r3885559907) |
+| AI 도구 어댑터의 패키지 책임 배치 논의 기록 | [AI 챗봇 PR #421](https://github.com/woowacourse-teams/2026-bibbidi/pull/421#discussion_r4237282779) |
+| 백엔드 PR CI 검증 명령 개편 (`./gradlew check bootJar`) | [백엔드 CI 개편 PR #499](https://github.com/woowacourse-teams/2026-bibbidi/pull/499) |
+| 변경된 운영 클래스 대상 PIT 변이 테스트 도입 | [PIT 변이 테스트 도입 PR #795](https://github.com/woowacourse-teams/2026-bibbidi/pull/795) |
