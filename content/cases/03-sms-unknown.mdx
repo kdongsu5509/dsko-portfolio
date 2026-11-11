@@ -1,15 +1,17 @@
 ---
 project: ImHere
 order: 3
-title: SMS 중복 발송 방지
-headline: ImHere에서 같은 SMS가 두 번 나간 원인을 찾아 결과 불명인 발송은 자동 재시도에서 제외
-summary: 같은 문자가 두 번 나간 원인을 찾아 확실히 실패한 경우만 다시 보내도록 발송 상태를 나눴습니다
+title: SMS 중복 발송 방지 — 외부 API의 불확실성을 발송 상태로 분리
+headline: Solapi SDK 1.1.0 소스 코드를 직접 분석해 접수 여부가 불확실한 예외를 UNKNOWN 상태로 분리하고 무조건적인 재발송을 차단
+summary: 일반적인 SMS 발송 테스트에서 같은 문자가 3분 간격으로 두 번 도착한 원인을 추적해, 확실한 미접수만 재시도하고 결과 불명 건은 공급사 메시지 ID로 실제 처리 결과를 조회하도록 개선했습니다
 period: 2026.08
 role: 1인 개발 · 서버 전체
-stack: [Kotlin 2.3, Spring Boot 4.1, Solapi SDK]
+stack: [Kotlin 2.3, Spring Boot 4.1, Solapi SDK 1.1.0]
 metrics:
+  - { value: 3분, label: 문제 발견 당시 중복 SMS 수신 간격 }
   - { value: 60초, label: 결과 불명 건의 실제 결과 조회 주기 }
-  - { value: 최대 2회, label: SMS 한 건당 공급사 호출 }
+  - { value: 최대 2회, label: SMS 한 건당 공급사 발송 호출 한도 }
+  - { value: 5회, label: 개선 후 실제 정상 발송 검증(중복 0건) }
 ---
 
 <Compare>
@@ -17,10 +19,10 @@ metrics:
     <Graph
       cols={3}
       nodes={[
-        { id: 'pending', label: '대기', col: 1, row: 1 },
-        { id: 'processing', label: '처리 중', col: 2, row: 1 },
-        { id: 'sent', label: '발송 완료', col: 3, row: 1 },
-        { id: 'failed', label: '실패', sub: '응답이 끊긴 경우까지 포함', col: 2, row: 2, tone: 'bad' },
+        { id: 'pending', label: '대기 (PENDING)', col: 1, row: 1 },
+        { id: 'processing', label: '처리 중 (PROCESSING)', col: 2, row: 1 },
+        { id: 'sent', label: '발송 완료 (SENT)', col: 3, row: 1 },
+        { id: 'failed', label: '실패 (FAILED)', sub: '접수 여부를 모르는 예외까지 포함', col: 2, row: 2, tone: 'bad' },
       ]}
       edges={[
         { from: 'pending', to: 'processing' },
@@ -34,12 +36,12 @@ metrics:
     <Graph
       cols={3}
       nodes={[
-        { id: 'pending', label: '대기', col: 1, row: 1 },
-        { id: 'processing', label: '처리 중', col: 2, row: 1 },
-        { id: 'sent', label: '발송 완료', col: 3, row: 1 },
-        { id: 'failed', label: '실패', sub: '잘못된 요청 · 인증 오류 · 미접수', col: 1, row: 2 },
-        { id: 'unknown', label: '결과 불명', sub: '그 밖의 예외 · 처리 중 응답', col: 2, row: 2, tone: 'good' },
-        { id: 'dead', label: '최종 실패', sub: '공급사 호출 없이 중단 · Discord 알림', col: 1, row: 3 },
+        { id: 'pending', label: '대기 (PENDING)', col: 1, row: 1 },
+        { id: 'processing', label: '처리 중 (PROCESSING)', col: 2, row: 1 },
+        { id: 'sent', label: '발송 완료 (SENT)', col: 3, row: 1 },
+        { id: 'failed', label: '실패 (FAILED)', sub: '잘못된 요청 · 인증 오류 · 미접수', col: 1, row: 2 },
+        { id: 'unknown', label: '결과 불명 (UNKNOWN)', sub: '접수 여부를 확신할 수 없는 예외', col: 2, row: 2, tone: 'good' },
+        { id: 'dead', label: '최종 실패 (DEAD)', sub: '공급사 호출 중단 · Discord 경보', col: 1, row: 3 },
       ]}
       edges={[
         { from: 'pending', to: 'processing' },
@@ -55,37 +57,124 @@ metrics:
   </Panel>
 </Compare>
 
-### 문제
+### 문제 발견: 3분 간격으로 두 번 도착한 동일 SMS
 
-테스트 중 같은 SMS가 3분 간격으로 두 번 나갔습니다. 응답이 끊길 때마다 재시도 한도까지 같은 문자가 반복 발송될 수 있어, 문자 요금을 낭비하고 중복 알림을 보낼 위험이 있었습니다.
+**이번 개선의 핵심은 공식 문서만으로 판단하기 어려운 외부 SDK(Software Development Kit)의 예외 발생 조건을 소스 코드 수준에서 직접 확인하고, 요청 미접수가 확실한 실패(`FAILED`)와 접수 여부를 단정할 수 없는 결과 불명(`UNKNOWN`)을 분리해 무조건적인 재발송을 차단한 것입니다.**
 
-### 원인
+ImHere는 사용자의 출발·도착 사실을 SMS(Short Message Service)로 전달합니다. SMS는 외부 공급사인 Solapi를 호출해 발송하므로 요청 건수마다 실제 비용이 발생합니다. 2026년 8월 일반적인 SMS 발송 기능을 확인하던 중 같은 문자가 3분 간격으로 두 번 도착하는 현상을 발견했습니다.
 
-공급사 응답이 끊겨 발송 여부를 알 수 없는 예외까지 실패로 기록한 것이 원인이었습니다. 그런데 복구 스케줄러는 실패 건을 다시 보내기 때문에 이미 나간 문자가 또 나갔습니다.
+직전에 Solapi 오류 처리 로직을 추가했기 때문에 해당 변경을 가장 먼저 의심했습니다. 발송 로직을 점검한 뒤 Solapi의 응답 전체를 로깅하도록 수정해 실제 응답과 내부 처리 흐름을 대조했습니다. 당시 알림 시스템에는 서버 장애로 인한 알림 유실을 막으려고 실패한 작업을 일정 시간 뒤 다시 처리하는 복구 스케줄러가 있었습니다. 그러나 공급사에 이미 요청이 접수됐을 가능성이 있는 예외까지 애플리케이션이 `FAILED`로 기록하면서 복구 스케줄러가 동일한 SMS를 다시 발송하는 문제가 발생했습니다. 중복 알림은 수신자에게 불편을 줄 뿐 아니라 발송 건수에 비례해 SMS 비용을 낭비하는 원인이 됐습니다.
 
-### 고려한 방법
+### 원인 분석: 예외 발생과 요청 미접수는 같은 뜻이 아니었습니다
 
-- **지금처럼 모든 예외를 실패로 두고 재시도**: 문자가 누락되지는 않지만 이번처럼 이미 나간 문자가 다시 나갑니다.
-- **서버가 붙인 식별값으로 공급사에 결과 조회**: Solapi 조회 API가 서버가 붙인 값으로는 메시지를 찾지 못해 쓸 수 없었습니다.
-- **발송 전에 메시지 그룹을 먼저 만들어 그룹 ID 확보**: 응답이 끊겨도 조회할 수 있지만 발송 흐름을 두 번의 호출로 바꿔야 합니다.
-- **결과 불명 상태를 따로 두고 공급사 메시지 ID로 조회**: 지금 구조를 크게 바꾸지 않고 확실하지 않은 건만 재시도에서 뺄 수 있습니다.
+#### 1. 공식 문서만으로는 예외의 의미를 구분하기 어려웠습니다
 
-### 선택과 이유
+처음에는 공식 Solapi SDK 문서를 확인했지만 문서 설명만으로는 발송 API(Application Programming Interface)에서 던지는 예외가 정확히 어떤 상황을 뜻하는지 판단하기 어려웠습니다. 특히 재시도 여부를 결정하려면 다음 두 상황을 엄격히 구분해야 했습니다.
 
-**결과 불명 상태를 따로 두고 공급사 메시지 ID로 조회하기로 했습니다.** 중복 발송을 막는 것이 급했고, 발송 흐름을 바꾸지 않고도 대부분을 확정할 수 있었습니다. 잘못된 요청, 인증 오류, 미접수처럼 문자가 확실히 안 나간 경우만 실패로 두고, 그 밖의 예외와 공급사의 처리 중 응답은 결과 불명으로 분리해 자동 재시도에서 뺐습니다.
+- **Solapi가 발송 요청을 접수하지 않았다는 사실이 확인된 경우**: 재시도해도 중복 발송이 발생하지 않습니다.
+- **애플리케이션이 응답을 받지 못해 Solapi의 접수 여부를 모르는 경우**: 이미 접수된 요청일 수 있으므로 곧바로 재발송하면 중복 문자가 나갑니다.
 
-결과 불명 건은 60초마다 공급사 메시지 ID로 실제 결과를 조회해 발송 완료나 실패로 확정합니다. 실패가 쌓여 재시도 한도에 닿으면 공급사를 부르지 않고 최종 실패로 돌린 뒤 Discord로 알림을 보냅니다.
+기존 오류 처리는 이 차이를 반영하지 않고 모든 예외를 동일하게 실패로 취급했습니다. 문서의 설명만으로 추측해 결론을 내리는 대신 실제 사용 중이던 Solapi SDK 1.1.0의 소스 코드를 열어 어떤 조건에서 각 예외가 발생하는지 직접 확인했습니다.
 
-### 감수한 것
+#### 2. Solapi SDK 1.1.0 소스 코드에서 확인한 예외 발생 조건
 
-**결과 불명은 다시 보내지 않는 쪽을 택했습니다.** 공급사 메시지 ID를 받기 전에 응답이 끊긴 건은 조회할 방법이 없어, 실제로 안 나갔더라도 재발송하지 않으므로 문자가 누락될 수 있음을 감수했습니다.
+SDK의 `DefaultMessageService.send()`는 내부적으로 [`MessageServiceHelper.kt`](https://github.com/solapi/solapi-kotlin/blob/v1.1.0/src/main/java/com/solapi/sdk/message/lib/MessageServiceHelper.kt)의 `processSendRequest()`를 호출합니다. 이 함수의 구현을 분석한 결과 HTTP(Hypertext Transfer Protocol) 성공 응답 안에서도 메시지 접수 결과에 따라 예외가 나뉘고 HTTP 비성공 응답은 별도 예외로 처리되고 있었습니다.
 
-### 결과
+```kotlin
+if (failedMessageList.isNotEmpty() &&
+    (count.total ?: 0) == failedMessageList.count()
+) {
+    throw SolapiMessageNotReceivedException(
+        "메시지 발송 접수에 실패했습니다."
+    )
+}
+```
 
-- 결과 불명인 문자를 자동으로 다시 보내던 경로를 없앴습니다.
-- SMS 한 건이 공급사를 부르는 횟수가 최대 2회로 묶입니다.
-- 공급사 메시지 ID가 있는 결과 불명 건은 사람이 보지 않아도 실제 결과로 확정됩니다.
+위 코드는 응답에 포함된 모든 메시지가 접수에 실패했을 때만 `SolapiMessageNotReceivedException`을 던집니다. 반면 HTTP 성공 응답의 본문이 비어 있으면 `SolapiEmptyResponseException`을 던지고 HTTP 비성공 응답이면 `SolapiUnknownException`을 던집니다. 나아가 네트워크 타임아웃처럼 HTTP 호출 도중 발생하는 예외는 발송 요청이 공급사에 실제로 접수됐는지 알려주지 않습니다. 결국 예외가 발생했다는 사실만으로 SMS를 다시 발송해도 안전하다고 단정할 수 없었습니다.
+
+### 해결 방향 검토
+
+중복 발송을 막기 위해 당시 검토한 선택지는 네 가지였습니다.
+
+| 대안 | 장점 | 한계 |
+| --- | --- | --- |
+| 기존 실패 처리와 재시도 유지 | 알림 유실 가능성을 낮춤 | 이미 접수된 SMS를 다시 발송할 수 있음 |
+| 서버가 지정한 식별자로 결과 조회 | 기존 요청과 바로 연결 가능 | 사용하려던 Solapi 메시지 조회 방식에서는 해당 값을 조회 키로 쓰기 어려움 |
+| 발송 전에 메시지 그룹 생성 | 응답이 끊기더라도 그룹 ID(Identifier)를 미리 확보 가능 | 발송 흐름을 추가 API 호출이 필요한 2단계 구조로 바꿔야 함 |
+| `UNKNOWN` 상태 분리 | 기존 발송 구조를 유지하면서 중복 발송 위험을 즉시 제거 | 메시지 ID를 받기 전에 응답이 끊기면 결과 조회 불가 |
+
+당시에는 실제 발생하고 있던 중복 발송 문제를 빠르게 차단하는 일이 가장 시급했습니다. 발송 전에 메시지 그룹을 생성하도록 전체 발송 흐름을 뜯어고치기보다, **기존 발송 구조를 유지하면서 발송 결과가 불확실한 상태를 `UNKNOWN`으로 분리하고 확인 가능한 경우에만 공급사 조회 API로 결과를 확정하는 방식을 선택했습니다.**
+
+### 구현: 확실한 실패(`FAILED`)와 결과 불명(`UNKNOWN`)을 분리
+
+변경의 핵심은 예외가 발생했을 때 무조건 `FAILED`로 저장하던 흐름을 고쳐 재시도 가능 여부를 `FAILED`와 `UNKNOWN` 두 상태로 분리한 것입니다.
+
+#### 1. 접수 실패가 확실한 예외만 재시도 대상으로 분류
+
+[`SolapiAdapter.kt`](https://github.com/ImHereOfRati/server/blob/main/src/main/kotlin/com/kdongsu5509/notifications/adapter/out/solapi/SolapiAdapter.kt)에서 잘못된 요청, 인증 오류, 미접수처럼 공급사가 요청을 처리하지 않았다고 확신할 수 있는 예외만 `fail`로 분류했습니다. 반대로 접수 여부를 단정할 수 없는 그 밖의 예외는 `unknown`으로 분리했습니다.
+
+```kotlin
+return if (
+    e is SolapiBadRequestException ||
+    e is SolapiInvalidApiKeyException ||
+    e is SolapiMessageNotReceivedException
+) {
+    MessageSendResult.fail(errorMessage)
+} else {
+    MessageSendResult.unknown(errorMessage)
+}
+```
+
+이 분기를 적용해 결과 불명 건은 일반 실패 건과 달리 자동 재발송 대상에서 즉시 제외했습니다.
+
+#### 2. 결과 불명 건은 60초마다 공급사 메시지 ID로 상태 조회
+
+`UNKNOWN` 상태라도 Solapi가 발급한 메시지 ID가 남아 있다면 실제 발송 결과를 사후에 확인할 수 있습니다. [`NotificationRecoveryScheduler.kt`](https://github.com/ImHereOfRati/server/blob/main/src/main/kotlin/com/kdongsu5509/notifications/scheduler/NotificationRecoveryScheduler.kt)가 60초마다 결과 불명 건을 조회하고 공급사 메시지 ID로 Solapi의 메시지 조회 API를 호출하도록 구현했습니다. 조회 결과에 따라 상태를 `SENT` 또는 `FAILED`로 확정하며 아직 발송 중이거나 결과를 확정할 수 없으면 `UNKNOWN` 상태를 유지합니다. 반면 공급사 메시지 ID를 응답받기 전에 통신이 끊긴 경우에는 이 방식으로 조회할 수 없었습니다.
+
+#### 3. 재시도 한도(최대 2회)와 운영자 Discord 경보
+
+확실한 실패(`FAILED`)로 분류된 SMS가 반복 실패하더라도 공급사를 무한정 호출하지 않도록 재시도 한도를 걸었습니다. 동일 알림의 공급사 발송 호출을 최대 2회로 제한하고 한도에 도달하면 추가 발송 요청 없이 `DEAD` 상태로 전환한 뒤 Discord 채널로 운영자에게 경보를 보냅니다. 공급사 장애가 길어질 때 자동 재시도가 불필요한 호출 비용을 계속 발생시키는 일을 막기 위한 장치입니다.
+
+### 감수한 한계
+
+결과 불명 건의 자동 재발송을 멈추면서 실제로 발송되지 않은 SMS가 누락될 가능성은 의도적으로 감수했습니다. 예를 들어 다음 흐름이 발생할 수 있습니다.
+
+1. 애플리케이션이 Solapi에 발송 요청을 보냅니다.
+2. 응답을 받기 전에 네트워크 통신이 끊깁니다.
+3. 애플리케이션 DB(Database)에는 공급사 메시지 ID가 남지 않습니다.
+4. 발송 여부를 조회할 키가 없어 `UNKNOWN` 상태를 유지합니다.
+5. 중복 발송을 막기 위해 자동으로 다시 발송하지 않습니다.
+
+이 상황에서 Solapi가 처음부터 요청을 접수하지 못했다면 해당 SMS는 누락됩니다. 그러나 이미 접수된 요청을 다시 보내면 중복 SMS 수신과 추가 발송 비용이 곧바로 발생합니다. 실제로 중복 발송을 겪은 직후였기 때문에 불확실한 상황에서 무조건 다시 보내는 위험을 먼저 제거하기로 판단했습니다.
+
+외부 공급사의 실제 발송과 내부 DB 상태 변경을 한 트랜잭션으로 묶을 수 없다는 구조적 한계도 남아 있습니다. 따라서 이번 개선은 정확히 한 번 발송(Exactly-once)을 보장하는 것이 아니라, **불확실한 결과에 대한 무조건적인 재시도를 걷어내 중복 발송 위험을 통제한 설계**입니다.
+
+### 검증 결과
+
+[`SolapiAdapterTest.kt`](https://github.com/ImHereOfRati/server/blob/main/src/test/kotlin/com/kdongsu5509/notifications/adapter/out/solapi/SolapiAdapterTest.kt)와 `NotificationDeliveryFacadeTest` 단위 테스트로 공급사 응답 및 예외 분류, 중복 등록 방지, 재시도 흐름을 검증했습니다. 이어서 실제 Solapi를 연동한 발송 시험도 수행했습니다.
+
+- 정상 발송 요청을 **총 5회** 실행해 각 요청마다 SMS가 정확히 한 번씩만 수신되는 것을 확인했습니다.
+- 결과 불명 상태를 자동 재발송 대상에서 제외하는 흐름을 적용한 뒤 **중복 SMS 수신은 0건**이었습니다.
+- 다만 공급사가 요청을 접수한 직후 응답이 끊기는 네트워크 장애 상황을 인위적으로 재현해 시험하지는 못했으므로, 실환경의 모든 예외 조건을 모의 시험으로 입증한 것은 아닙니다.
 
 ### 다시 한다면
 
-- 발송 전에 메시지 그룹을 만들어 그룹 ID를 먼저 받아 두면 응답이 끊긴 건도 조회할 수 있으므로, 이 방식으로 바꿉니다.
+- **발송 요청 전에 조회 가능한 그룹 식별자를 먼저 확보하겠습니다**: 이번에는 발송 응답에 담긴 메시지 ID로 결과 불명 건을 조회하다 보니 응답 자체가 끊기면 결과를 확인할 방법이 없었습니다. 다시 설계한다면 발송 전에 메시지 그룹을 먼저 생성해 그룹 ID를 확보해 두고, 발송 응답이 유실되더라도 미리 확보한 그룹 ID로 공급사 처리 결과를 끝까지 조회하도록 개선하겠습니다.
+- **WireMock으로 공급사 접수 후 응답 유실 상황을 재현해 검증하겠습니다**: 정상 발송 5회 검증에 더해 WireMock으로 공급사가 요청을 접수한 뒤 타임아웃이 나는 상황을 모의하고, `UNKNOWN` 상태 저장 여부와 복구 스케줄러의 재발송 차단 여부, 메시지 ID 보유 시 상태 확정 흐름을 자동화 테스트로 검증하겠습니다.
+- **응답 상태 코드 분류 조건의 우선순위를 재점검하겠습니다**: 현재 코드에는 상태 코드 `2000`이 성공과 `UNKNOWN` 양쪽 코드 집합에 함께 포함되어 있어 조건문 순서상 성공으로 먼저 처리되는 구간이 있습니다. 처리 중 응답 코드의 세부 의미를 재확인해 상태 코드 집합 간 중복을 제거하고 분류 테스트를 보강하겠습니다.
+
+### 회고
+
+**외부 시스템과 연동할 때는 공식 문서의 설명만으로 실제 동작을 단정하지 않고 SDK 소스 코드와 실제 응답 로그로 예외의 정확한 의미를 확인해야 한다는 원칙을 세웠습니다.** 처음에는 Solapi SDK 문서와 기본 인터페이스에 의존해 모든 예외를 실패로 다루었지만, 실제 중복 발송을 겪은 뒤 응답 전체를 로깅하고 SDK 1.1.0의 [`MessageServiceHelper.kt`](https://github.com/solapi/solapi-kotlin/blob/v1.1.0/src/main/java/com/solapi/sdk/message/lib/MessageServiceHelper.kt) 구현을 직접 열어서야 예외마다 요청 접수 여부가 다르다는 사실을 파악했습니다.
+
+특히 **외부 API 호출에서 예외가 발생했다는 사실과 외부 시스템이 요청을 처리하지 않았다는 사실은 전혀 다릅니다.** 이 차이를 구분하지 않은 재시도는 장애를 복구하기보다 중복 과금과 중복 발송이라는 새로운 장애를 만듭니다. 앞으로도 외부 API 동작이 모호할 때는 추측에 기대지 않고 실제 응답과 SDK 구현 코드로 근거를 확보해 상태 전이 정책을 설계하겠습니다.
+
+### 참고 및 코드 근거
+
+| 구분 | 근거 링크 |
+| --- | --- |
+| 중복 발송 방지 및 `UNKNOWN` 상태 분리 커밋 (2026.08.19) | [수정 커밋](https://github.com/ImHereOfRati/server/commit/c48415a37b4ca1c86ead00d41e29b7d953b16c58) |
+| Solapi SDK 1.1.0 발송·예외 처리 소스 코드 | [MessageServiceHelper.kt](https://github.com/solapi/solapi-kotlin/blob/v1.1.0/src/main/java/com/solapi/sdk/message/lib/MessageServiceHelper.kt) |
+| 예외 유형별 `fail` / `unknown` 분기 구현 | [SolapiAdapter.kt](https://github.com/ImHereOfRati/server/blob/main/src/main/kotlin/com/kdongsu5509/notifications/adapter/out/solapi/SolapiAdapter.kt) |
+| 60초 주기 결과 불명 조회 및 미완료 알림 복구 | [NotificationRecoveryScheduler.kt](https://github.com/ImHereOfRati/server/blob/main/src/main/kotlin/com/kdongsu5509/notifications/scheduler/NotificationRecoveryScheduler.kt) |
+| 공급사 응답 및 예외 분류 단위 테스트 | [SolapiAdapterTest.kt](https://github.com/ImHereOfRati/server/blob/main/src/test/kotlin/com/kdongsu5509/notifications/adapter/out/solapi/SolapiAdapterTest.kt) |

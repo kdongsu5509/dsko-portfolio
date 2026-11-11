@@ -1,4 +1,4 @@
-import { useEffect, useState, type MouseEvent } from 'react'
+import { useEffect, useRef, useState, type MouseEvent } from 'react'
 import { cases, casesOf, projectOf, projects, type CaseEntry, type Project } from './content'
 import { Sequence, Msg, Note, Phase } from './diagrams/Sequence'
 import { Graph } from './diagrams/Graph'
@@ -7,6 +7,7 @@ import { Flow, Step, Compare, Panel } from './diagrams/Flow'
 const mdxComponents = { Sequence, Msg, Note, Phase, Graph, Flow, Step, Compare, Panel }
 
 type Go = (to: string) => (e: MouseEvent) => void
+type TocEntry = { id: string; text: string; level: 2 | 3 | 4 }
 
 function usePath() {
   const [path, setPath] = useState(window.location.pathname)
@@ -23,12 +24,6 @@ function usePath() {
     window.scrollTo(0, 0)
   }
   return { path, go }
-}
-
-function useTitle(title?: string) {
-  useEffect(() => {
-    document.title = title ? `${title} | 고동수` : '고동수 포트폴리오'
-  }, [title])
 }
 
 export default function App() {
@@ -59,7 +54,6 @@ export default function App() {
 }
 
 function Home({ go }: { go: Go }) {
-  useTitle()
   return (
     <>
       <section className="hero">
@@ -237,7 +231,6 @@ function Home({ go }: { go: Go }) {
 }
 
 function ProjectPage({ project, go }: { project: Project; go: Go }) {
-  useTitle(project.name)
   const list = casesOf(project)
   return (
     <section className="project-page">
@@ -281,13 +274,18 @@ function ProjectPage({ project, go }: { project: Project; go: Go }) {
           </div>
         </dl>
 
+        <h2 className="section-title">문제 해결</h2>
         <ol className="case-list">
-          {list.map((c) => (
-            <li key={c.slug} className="case-item">
-              <h3 className="case-item__title">{c.title}</h3>
-              <div className="prose case-item__body">
-                <c.Content components={mdxComponents} />
-              </div>
+          {list.map((c, index) => (
+            <li key={c.slug}>
+              <a href={`/cases/${c.slug}`} onClick={go(`/cases/${c.slug}`)} className="case-row">
+                <div className="case-row__body">
+                  <span className="case-row__number">{String(index + 1).padStart(2, '0')} / 문제 해결</span>
+                  <h3>{c.title}</h3>
+                  <p>{c.summary}</p>
+                </div>
+                <span className="case-row__action">자세히 보기 →</span>
+              </a>
             </li>
           ))}
         </ol>
@@ -297,11 +295,32 @@ function ProjectPage({ project, go }: { project: Project; go: Go }) {
 }
 
 function CasePage({ entry, go }: { entry: CaseEntry; go: Go }) {
-  useTitle(entry.title)
   const { Content } = entry
   const project = projectOf(entry)
-  const siblings = casesOf(project)
-  const next = siblings[siblings.indexOf(entry) + 1]
+  const contentRef = useRef<HTMLDivElement>(null)
+  const [toc, setToc] = useState<TocEntry[]>([])
+  const [activeId, setActiveId] = useState('')
+
+  useEffect(() => {
+    const headings = Array.from(contentRef.current?.querySelectorAll<HTMLHeadingElement>('h2, h3, h4') ?? [])
+    const entries = headings.map((heading, index) => {
+      if (!heading.id) heading.id = `${entry.slug}-section-${index}`
+      return { id: heading.id, text: heading.textContent?.trim() ?? '', level: Number(heading.tagName[1]) as 2 | 3 | 4 }
+    })
+    setToc(entries)
+
+    const updateActive = () => {
+      const current = headings.filter((heading) => heading.getBoundingClientRect().top <= 110).at(-1)
+      setActiveId(current?.id ?? headings[0]?.id ?? '')
+    }
+    updateActive()
+    window.addEventListener('scroll', updateActive, { passive: true })
+    window.addEventListener('resize', updateActive)
+    return () => {
+      window.removeEventListener('scroll', updateActive)
+      window.removeEventListener('resize', updateActive)
+    }
+  }, [entry.slug])
 
   return (
     <article className="case-page">
@@ -317,45 +336,30 @@ function CasePage({ entry, go }: { entry: CaseEntry; go: Go }) {
           <h1>{entry.headline}</h1>
         </header>
         <div className="case-layout">
-          <div className="prose">
+          <div className="prose" ref={contentRef}>
             <Content components={mdxComponents} />
           </div>
-          <aside className="case-facts">
-            <dl>
-              <div>
-                <dt>기간</dt>
-                <dd>{entry.period}</dd>
-              </div>
-              <div>
-                <dt>역할</dt>
-                <dd>{entry.role}</dd>
-              </div>
-              <div>
-                <dt>기술</dt>
-                <dd>{entry.stack.join(' · ')}</dd>
-              </div>
-            </dl>
-            <ul className="case-metrics">
-              {entry.metrics.map((m) => (
-                <li key={m.label}>
-                  <strong>{m.value}</strong>
-                  <span>{m.label}</span>
-                </li>
-              ))}
-            </ul>
+          <aside className="case-sidebar">
+            {toc.length > 0 && (
+              <nav className="project-toc" aria-label="글 목차">
+                <p className="project-toc__title">목차</p>
+                <ol className="project-toc__links">
+                  {toc.map((item) => (
+                    <li key={item.id}>
+                      <a
+                        href={`#${item.id}`}
+                        className={`project-toc__link project-toc__link--h${item.level}`}
+                        aria-current={activeId === item.id ? 'location' : undefined}
+                      >
+                        {item.text}
+                      </a>
+                    </li>
+                  ))}
+                </ol>
+              </nav>
+            )}
           </aside>
         </div>
-        {next ? (
-          <a href={`/cases/${next.slug}`} onClick={go(`/cases/${next.slug}`)} className="next-case">
-            <span>{project.name} 다음 사례</span>
-            <strong>{next.title}</strong>
-          </a>
-        ) : (
-          <a href={`/projects/${project.slug}`} onClick={go(`/projects/${project.slug}`)} className="next-case">
-            <span>{project.name}</span>
-            <strong>프로젝트로 돌아가기</strong>
-          </a>
-        )}
       </div>
     </article>
   )
