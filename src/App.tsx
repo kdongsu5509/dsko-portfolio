@@ -334,9 +334,6 @@ function CasePage({ entry, go }: { entry: CaseEntry; go: Go }) {
             {project.name}
           </span>
           <h1>{entry.headline}</h1>
-          <p className="case-head__role">
-            {entry.period} · {entry.role}
-          </p>
         </header>
         <div className="case-layout">
           <div className="prose" ref={contentRef}>
